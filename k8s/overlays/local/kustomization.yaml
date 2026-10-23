@@ -1,0 +1,39 @@
+# Local cluster (Colima/k3s, kind, minikube): offline agents, single replicas, no public ingress.
+#   kubectl apply -k k8s/overlays/local
+#   kubectl -n resume-optimizer port-forward svc/ui 8501:8501
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+images:
+  - name: ghcr.io/nalin216127/resume-optimizer-api
+    newTag: main
+  - name: ghcr.io/nalin216127/resume-optimizer-ui
+    newTag: main
+patches:
+  - target: {kind: Ingress, name: resume-optimizer}
+    patch: |-
+      $patch: delete
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata: {name: resume-optimizer}
+  - target: {kind: ConfigMap, name: resume-optimizer-config}
+    patch: |-
+      - op: replace
+        path: /data/LLM_PROVIDER
+        value: mock
+  - target: {kind: HorizontalPodAutoscaler, name: api}
+    patch: |-
+      - op: replace
+        path: /spec/minReplicas
+        value: 1
+  - target: {kind: Deployment, name: api}
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+  - target: {kind: Deployment, name: ui}
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1

@@ -70,13 +70,22 @@ Set `LLM_PROVIDER=mock` to run everything offline. The mock uses deterministic h
 ## Docker Compose (Milvus + API + UI)
 
 ```bash
-cp .env.example .env        # add ANTHROPIC_API_KEY
+cp .env.example .env        # add ANTHROPIC_API_KEY, or set LLM_PROVIDER=mock
 docker compose up --build
 ```
 
 - UI: http://localhost:8501
 - API docs: http://localhost:8000/docs
-- Milvus: localhost:19530 (etcd and MinIO run alongside it)
+- Milvus: localhost:19530. It runs standalone with embedded etcd and local storage, so there are no separate etcd or MinIO containers.
+
+Sessions are saved to SQLite on a volume, so paused sessions survive an API restart.
+
+No Docker Desktop? On macOS, [Colima](https://github.com/abiosoft/colima) works:
+
+```bash
+brew install colima docker docker-compose kubectl
+colima start --cpu 6 --memory 10 --kubernetes
+```
 
 ## Kubernetes
 
@@ -88,6 +97,15 @@ kubectl -n resume-optimizer create secret generic resume-optimizer-secrets \
   --from-literal=POSTGRES_PASSWORD=<pw> \
   --from-literal=DATABASE_URL=postgresql://resume:<pw>@postgres:5432/resume
 kubectl apply -k k8s/overlays/production
+```
+
+To try it on a local cluster (Colima/k3s, kind, minikube), use the `local` overlay. It runs the offline agents with one replica each and no ingress:
+
+```bash
+docker compose build && docker tag resume-optimizer-api ghcr.io/nalin216127/resume-optimizer-api:main \
+  && docker tag resume-optimizer-ui ghcr.io/nalin216127/resume-optimizer-ui:main
+kubectl apply -k k8s/overlays/local     # after creating the secret as above
+kubectl -n resume-optimizer port-forward svc/ui 8501:8501
 ```
 
 What the manifests include:
