@@ -1,0 +1,3 @@
+# Single-container install (Streamlit Community Cloud / embedded mode): UI + agents in one process.
+-r requirements-api.txt
+-r requirements-ui.txt

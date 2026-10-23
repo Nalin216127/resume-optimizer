@@ -1,0 +1,52 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ui
+  labels: {app.kubernetes.io/name: ui, app.kubernetes.io/part-of: resume-optimizer}
+spec:
+  replicas: 2
+  selector:
+    matchLabels: {app.kubernetes.io/name: ui}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: ui, app.kubernetes.io/part-of: resume-optimizer}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: ui
+          image: ghcr.io/OWNER/resume-optimizer-ui:latest
+          imagePullPolicy: IfNotPresent
+          ports: [{name: http, containerPort: 8501}]
+          env:
+            - {name: API_URL, value: "http://api:8000"}
+            - name: API_AUTH_TOKEN
+              valueFrom: {secretKeyRef: {name: resume-optimizer-secrets, key: API_AUTH_TOKEN}}
+            - {name: HOME, value: /tmp}
+          readinessProbe:
+            httpGet: {path: /_stcore/health, port: http}
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /_stcore/health, port: http}
+            initialDelaySeconds: 20
+            periodSeconds: 20
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {cpu: 500m, memory: 512Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts: [{name: tmp, mountPath: /tmp}]
+      volumes: [{name: tmp, emptyDir: {}}]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ui
+spec:
+  selector: {app.kubernetes.io/name: ui}
+  ports: [{name: http, port: 8501, targetPort: http}]

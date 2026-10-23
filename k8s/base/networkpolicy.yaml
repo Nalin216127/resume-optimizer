@@ -1,0 +1,25 @@
+# Data stores accept traffic only from the API (and the seed Job).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: milvus-ingress
+spec:
+  podSelector: {matchLabels: {app.kubernetes.io/name: milvus}}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: {matchLabels: {app.kubernetes.io/name: api}}
+        - podSelector: {matchLabels: {app.kubernetes.io/name: seed-knowledge}}
+      ports: [{port: 19530}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres-ingress
+spec:
+  podSelector: {matchLabels: {app.kubernetes.io/name: postgres}}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: {matchLabels: {app.kubernetes.io/name: api}}
+      ports: [{port: 5432}]

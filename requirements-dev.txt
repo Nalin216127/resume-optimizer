@@ -1,0 +1,4 @@
+-r requirements-api.txt
+-r requirements-ui.txt
+pytest>=8.0
+httpx>=0.27

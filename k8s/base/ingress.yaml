@@ -1,0 +1,23 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: resume-optimizer
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"   # agent runs can take minutes
+    nginx.ingress.kubernetes.io/proxy-body-size: 8m
+    cert-manager.io/cluster-issuer: letsencrypt
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: [resume.example.com]
+      secretName: resume-optimizer-tls
+  rules:
+    - host: resume.example.com
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend: {service: {name: api, port: {name: http}}}
+          - path: /
+            pathType: Prefix
+            backend: {service: {name: ui, port: {name: http}}}

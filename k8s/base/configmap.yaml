@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: resume-optimizer-config
+data:
+  LLM_PROVIDER: anthropic
+  ANTHROPIC_MODEL: claude-opus-5-5
+  ANTHROPIC_REFUSAL_FALLBACK: "true"
+  VECTOR_BACKEND: milvus
+  MILVUS_URI: http://milvus:19530
+  MILVUS_COLLECTION: resume_knowledge
+  EMBEDDING_DIM: "384"
+  CHECKPOINT_BACKEND: postgres
+  QUALITY_THRESHOLD: "8.0"
+  MAX_AUTO_REVISIONS: "2"
+  SEED_ON_STARTUP: "false"
+  CORS_ORIGINS: "*"
