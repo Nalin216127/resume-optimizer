@@ -1,5 +1,10 @@
 # Multi-Agent Resume Optimizer
 
+[![Live demo](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://nalin-resume-optimizer.streamlit.app)
+[![CI](https://github.com/Nalin216127/resume-optimizer/actions/workflows/ci.yml/badge.svg)](https://github.com/Nalin216127/resume-optimizer/actions/workflows/ci.yml)
+
+**Live demo:** https://nalin-resume-optimizer.streamlit.app. The demo runs in embedded mode, with an in-memory store instead of Milvus. Without an Anthropic key in its secrets, it uses the offline demo agents.
+
 A resume tailoring system built on **LangGraph**. A Supervisor coordinates Context, Writer and Reviewer agents, then pauses for a **human-in-the-loop** approval before anything is final. A **FastAPI** backend and a **Streamlit** UI sit on top. **Milvus** holds the retrieval knowledge base. The stack ships with **Docker Compose** and **Kubernetes** manifests.
 
 ```
