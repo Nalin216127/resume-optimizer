@@ -3,10 +3,10 @@ kind: Kustomization
 resources:
   - ../../base
 images:
-  - name: ghcr.io/OWNER/resume-optimizer-api
-    newTag: "1.0.0"
-  - name: ghcr.io/OWNER/resume-optimizer-ui
-    newTag: "1.0.0"
+  - name: ghcr.io/nalin216127/resume-optimizer-api
+    newTag: main
+  - name: ghcr.io/nalin216127/resume-optimizer-ui
+    newTag: main
 patches:
   - target: {kind: HorizontalPodAutoscaler, name: api}
     patch: |-

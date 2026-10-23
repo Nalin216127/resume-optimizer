@@ -94,7 +94,7 @@ What the manifests include:
 - **Ingress** with TLS (cert-manager) and a 600 s read timeout, because agent runs can take minutes.
 - **NetworkPolicies**: only the API (and the seed Job) can reach the data stores.
 
-Replace `ghcr.io/OWNER/...` with your registry. The CI workflow builds and pushes the images to GHCR on every push to `main`.
+Images live at `ghcr.io/nalin216127/resume-optimizer-{api,ui}`. CI builds and pushes them on every push to `main` (tag `main`), and on `v*` tags (semver tags).
 
 ## API
 

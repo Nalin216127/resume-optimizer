@@ -18,7 +18,7 @@ spec:
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: ui
-          image: ghcr.io/OWNER/resume-optimizer-ui:latest
+          image: ghcr.io/nalin216127/resume-optimizer-ui:latest
           imagePullPolicy: IfNotPresent
           ports: [{name: http, containerPort: 8501}]
           env:

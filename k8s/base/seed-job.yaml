@@ -14,7 +14,7 @@ spec:
       securityContext: {runAsNonRoot: true, runAsUser: 10001}
       containers:
         - name: seed
-          image: ghcr.io/OWNER/resume-optimizer-api:latest
+          image: ghcr.io/nalin216127/resume-optimizer-api:latest
           command: ["python", "-m", "resume_optimizer.seed"]
           envFrom:
             - configMapRef: {name: resume-optimizer-config}

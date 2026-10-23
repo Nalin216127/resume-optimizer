@@ -32,7 +32,7 @@ spec:
           securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true}
       containers:
         - name: api
-          image: ghcr.io/OWNER/resume-optimizer-api:latest
+          image: ghcr.io/nalin216127/resume-optimizer-api:latest
           imagePullPolicy: IfNotPresent
           ports: [{name: http, containerPort: 8000}]
           envFrom:
