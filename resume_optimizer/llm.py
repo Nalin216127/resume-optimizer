@@ -5,11 +5,14 @@ model. Two implementations:
 
 * ``AnthropicLLM`` — Claude via the official Anthropic SDK structured outputs.
 * ``GeminiLLM`` — Google Gemini via the google-genai SDK with JSON-schema output.
+* ``OpenAICompatLLM`` — any OpenAI-compatible chat API (OpenRouter's free models, Groq, vLLM, ...).
+* ``ChainLLM`` — tries providers in order, so one free tier running out doesn't stop the app.
 * ``MockLLM`` — deterministic heuristics so the whole system (graph, API, UI,
   tests) runs offline without an API key.
 """
 from __future__ import annotations
 
+import json
 import logging
 import re
 import time
@@ -48,7 +51,8 @@ class AnthropicLLM:
         import anthropic  # imported lazily so the mock path has no hard dependency
 
         self._anthropic = anthropic
-        self.client = anthropic.Anthropic(max_retries=4, timeout=300)
+        self.label = "Claude"
+        self.client = anthropic.Anthropic(api_key=settings.anthropic_api_key or None, max_retries=4, timeout=300)
         self.model = settings.anthropic_model
         self.fallback = settings.anthropic_refusal_fallback
 
@@ -139,6 +143,7 @@ class GeminiLLM:
             api_key=settings.gemini_api_key,
             http_options=types.HttpOptions(timeout=settings.llm_timeout_seconds * 1000),
         )
+        self.label = "Gemini"
         self.model = settings.gemini_model
         # Quotas are per model, so when one model's quota runs out the next one usually still works.
         self.models = [self.model] + [m for m in settings.gemini_fallback_models if m != self.model]
@@ -223,9 +228,139 @@ class GeminiLLM:
                 raise LLMError(f"{task}: could not reach the Gemini API (timed out or connection lost)") from exc
 
 
+# ------------------------------------------------------- OpenAI-compatible APIs
+def _extract_json(text: str) -> str:
+    """Pull the JSON object out of a reply that may be wrapped in code fences or prose."""
+    text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text.strip())
+    start, end = text.find("{"), text.rfind("}")
+    return text[start:end + 1] if start != -1 and end > start else text
+
+
+class OpenAICompatLLM:
+    """Any OpenAI-compatible chat API: OpenRouter, Groq, Together, a vLLM server, ...
+
+    Not every hosted model supports strict JSON-schema output, so the schema goes in the prompt,
+    JSON mode is requested, and the reply is validated with Pydantic (one repair round on failure).
+    Each configured model is tried in turn; a rate-limited or overloaded model is skipped until it
+    recovers.
+    """
+
+    def __init__(self, label: str, base_url: str, api_key: str, models: List[str], timeout: int,
+                 headers: Optional[Dict[str, str]] = None):
+        import openai  # imported lazily: only needed when such a provider is configured
+
+        if not api_key or not models:
+            raise ValueError(f"{label} needs an API key and at least one model")
+        self._openai = openai
+        self.label = label
+        self.models = models
+        self.client = openai.OpenAI(base_url=base_url, api_key=api_key, timeout=timeout, max_retries=1,
+                                    default_headers=headers)
+        self._cooldown_until: Dict[str, float] = {}
+
+    def structured(self, *, task, system, prompt, schema, payload, effort):
+        instructions = (
+            f"{system}\n\nReply with one JSON object that conforms to this JSON Schema. "
+            f"Output JSON only: no prose and no code fences.\n{json.dumps(schema.model_json_schema())}"
+        )
+        messages = [{"role": "system", "content": instructions}, {"role": "user", "content": prompt}]
+        now = time.time()
+        errors: List[str] = []
+        for model in [m for m in self.models if self._cooldown_until.get(m, 0) <= now]:
+            try:
+                return self._answer(task, model, messages, schema)
+            except _QuotaExhausted as exc:
+                self._cooldown_until[model] = time.time() + exc.retry_after
+                errors.append(f"{model}: {exc.reason}")
+                log.warning("%s %s: %s on %s; trying next model", self.label, task, exc.reason, model)
+            except LLMError as exc:
+                errors.append(f"{model}: {exc}")
+                log.warning("%s %s: %s", self.label, task, exc)
+        raise LLMError(f"{task}: {self.label} unavailable ({'; '.join(errors) or 'all models cooling down'})")
+
+    def _answer(self, task, model, messages, schema):
+        for attempt in range(2):
+            text = self._complete(task, model, messages)
+            try:
+                return schema.model_validate_json(_extract_json(text))
+            except ValueError as exc:
+                if attempt == 1:
+                    raise LLMError(f"returned JSON that does not match the schema") from exc
+                messages = messages + [
+                    {"role": "assistant", "content": text},
+                    {"role": "user", "content": f"That JSON does not match the schema ({str(exc)[:500]}). "
+                                                "Reply with the corrected JSON object only."},
+                ]
+        raise AssertionError("unreachable")
+
+    def _complete(self, task, model, messages) -> str:
+        oa = self._openai
+        started = time.monotonic()
+        kwargs: Dict[str, Any] = dict(model=model, messages=messages, max_tokens=8000, temperature=0.2,
+                                      response_format={"type": "json_object"})
+        try:
+            try:
+                response = self.client.chat.completions.create(**kwargs)
+            except oa.BadRequestError as exc:
+                if "response_format" not in str(exc):
+                    raise
+                kwargs.pop("response_format")  # model without JSON mode: rely on the prompt + validation
+                response = self.client.chat.completions.create(**kwargs)
+        except oa.RateLimitError as exc:
+            raise _QuotaExhausted(model, self._reset_after(exc), "rate limited") from exc
+        except oa.NotFoundError as exc:
+            raise LLMError(f"model {model} is not available") from exc
+        except oa.APIStatusError as exc:
+            if exc.status_code >= 500:
+                raise _QuotaExhausted(model, GeminiLLM.OVERLOAD_COOLDOWN, "overloaded") from exc
+            raise LLMError(f"request rejected ({exc.status_code})") from exc
+        except (oa.APITimeoutError, oa.APIConnectionError) as exc:
+            raise _QuotaExhausted(model, 60, "unreachable") from exc
+        log.info("%s %s: %s %.1fs", self.label, task, model, time.monotonic() - started)
+        if not response.choices:
+            raise LLMError("returned no choices")
+        choice = response.choices[0]
+        if choice.finish_reason == "length":
+            raise LLMError("response was cut off at the token limit")
+        return choice.message.content or ""
+
+    @staticmethod
+    def _reset_after(exc: Any) -> float:
+        """Seconds until the limit resets, from Retry-After or OpenRouter's X-RateLimit-Reset (epoch ms)."""
+        headers = getattr(getattr(exc, "response", None), "headers", {}) or {}
+        try:
+            if headers.get("retry-after"):
+                return max(float(headers["retry-after"]), 1.0)
+            if headers.get("x-ratelimit-reset"):
+                return max(float(headers["x-ratelimit-reset"]) / 1000 - time.time(), 1.0)
+        except ValueError:
+            pass
+        return 60.0
+
+
+class ChainLLM:
+    """Try each provider in order; move to the next when one fails (quota, overload, bad output)."""
+
+    def __init__(self, providers: List[LLM]):
+        self.providers = providers
+        self.label = " → ".join(getattr(p, "label", type(p).__name__) for p in providers)
+
+    def structured(self, *, task, **kwargs):
+        errors = []
+        for provider in self.providers:
+            try:
+                return provider.structured(task=task, **kwargs)
+            except LLMError as exc:
+                errors.append(str(exc))
+                log.warning("%s failed, trying next provider: %s", getattr(provider, "label", provider), exc)
+        raise LLMError(f"{task}: every model provider failed. " + " | ".join(errors))
+
+
 # ----------------------------------------------------------------------- Mock
 class MockLLM:
-    """Heuristic stand-in for Claude. Good enough to exercise every workflow path."""
+    """Heuristic stand-in for a real model. Good enough to exercise every workflow path."""
+
+    label = "offline demo agents"
 
     def structured(self, *, task, system, prompt, schema, payload, effort):
         handler = {"context": self._context, "writer": self._writer, "reviewer": self._reviewer}[task]
@@ -317,12 +452,44 @@ class MockLLM:
         )
 
 
-def build_llm(settings: Settings) -> LLM:
-    if settings.llm_provider == "mock":
-        log.warning("LLM_PROVIDER=mock: using offline heuristic agents, not Claude")
+PROVIDER_ORDER = ("gemini", "openrouter", "openai_compat", "anthropic")
+
+
+def provider_names(settings: Settings) -> List[str]:
+    """Resolve LLM_PROVIDER ("auto", one name, or a comma-separated failover list) to provider names."""
+    raw = settings.llm_provider.strip().lower()
+    if raw != "auto":
+        return [p.strip() for p in raw.split(",") if p.strip()]
+    has_key = {
+        "gemini": bool(settings.gemini_api_key),
+        "openrouter": bool(settings.openrouter_api_key),
+        "openai_compat": bool(settings.openai_compat_base_url and settings.openai_compat_models),
+        "anthropic": bool(settings.anthropic_api_key),
+    }
+    return [p for p in PROVIDER_ORDER if has_key[p]] or ["mock"]
+
+
+def _build_one(name: str, settings: Settings) -> LLM:
+    if name == "mock":
+        log.warning("Using offline heuristic agents, not a real model (no LLM API key configured)")
         return MockLLM()
-    if settings.llm_provider == "anthropic":
+    if name == "anthropic":
         return AnthropicLLM(settings)
-    if settings.llm_provider == "gemini":
+    if name == "gemini":
         return GeminiLLM(settings)
-    raise ValueError(f"Unknown LLM_PROVIDER: {settings.llm_provider}")
+    if name == "openrouter":
+        return OpenAICompatLLM(
+            "OpenRouter", "https://openrouter.ai/api/v1", settings.openrouter_api_key, settings.openrouter_models,
+            settings.llm_timeout_seconds,
+            headers={"X-Title": "Multi-Agent Resume Optimizer",
+                     "HTTP-Referer": "https://github.com/Nalin216127/resume-optimizer"},
+        )
+    if name == "openai_compat":
+        return OpenAICompatLLM("OpenAI-compatible", settings.openai_compat_base_url, settings.openai_compat_api_key,
+                               settings.openai_compat_models, settings.llm_timeout_seconds)
+    raise ValueError(f"Unknown LLM provider: {name}")
+
+
+def build_llm(settings: Settings) -> LLM:
+    providers = [_build_one(n, settings) for n in provider_names(settings)]
+    return providers[0] if len(providers) == 1 else ChainLLM(providers)

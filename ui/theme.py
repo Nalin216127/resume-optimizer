@@ -358,3 +358,11 @@ def timeline(events: Iterable[Dict[str, str]]) -> str:
         for e in events
     )
     return f'<div class="ro-timeline">{rows}</div>'
+
+
+def evidence_card(claim: str, best_match: str, score: float) -> str:
+    return (
+        f'<div class="ro-card warning"><div class="head">⚠️ Not clearly traced to your resume</div>'
+        f'<div class="body">{esc(claim)}</div>'
+        f'<div class="hint">Closest original line ({score:.2f} similarity): {esc(best_match)}</div></div>'
+    )

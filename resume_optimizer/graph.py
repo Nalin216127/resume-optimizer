@@ -54,7 +54,7 @@ def build_graph(llm: LLM, store: KnowledgeStore, settings: Settings, checkpointe
     g.add_node("supervisor", supervisor)
     g.add_node("context", make_context_agent(llm, store, settings))
     g.add_node("writer", make_writer_agent(llm, settings))
-    g.add_node("reviewer", make_reviewer_agent(llm, settings))
+    g.add_node("reviewer", make_reviewer_agent(llm, settings, store.embedder))
     g.add_node("human", human_review)
 
     g.add_edge(START, "supervisor")

@@ -66,27 +66,37 @@ class ApiBackend:
 
 
 class EmbeddedBackend:
-    LABELS = {"anthropic": "Claude", "gemini": "Gemini", "mock": "offline demo agents"}
-
     def __init__(self, provider: str):
         from dataclasses import replace
 
         from resume_optimizer.config import Settings
         from resume_optimizer.service import ResumeService
 
-        if provider == "anthropic":
-            os.environ["ANTHROPIC_API_KEY"] = _secret("ANTHROPIC_API_KEY")  # the Anthropic SDK reads it from the env
+        base = Settings()
+
+        def models(name: str, default):
+            raw = _secret(name)
+            return [m.strip() for m in raw.split(",") if m.strip()] if raw else default
+
         settings = replace(
-            Settings(),
+            base,
             llm_provider=provider,
             gemini_api_key=_secret("GEMINI_API_KEY"),
-            gemini_model=_secret("GEMINI_MODEL", Settings().gemini_model),
-            anthropic_model=_secret("ANTHROPIC_MODEL", Settings().anthropic_model),
+            gemini_model=_secret("GEMINI_MODEL", base.gemini_model),
+            gemini_fallback_models=models("GEMINI_FALLBACK_MODELS", base.gemini_fallback_models),
+            openrouter_api_key=_secret("OPENROUTER_API_KEY"),
+            openrouter_models=models("OPENROUTER_MODELS", base.openrouter_models),
+            openai_compat_base_url=_secret("OPENAI_COMPAT_BASE_URL"),
+            openai_compat_api_key=_secret("OPENAI_COMPAT_API_KEY"),
+            openai_compat_models=models("OPENAI_COMPAT_MODELS", base.openai_compat_models),
+            anthropic_api_key=_secret("ANTHROPIC_API_KEY"),
+            anthropic_model=_secret("ANTHROPIC_MODEL", base.anthropic_model),
             vector_backend="memory",
             checkpoint_backend="memory",
         )
         self.svc = ResumeService(settings)
-        self.label = f"in-process ({self.LABELS.get(provider, provider)})"
+        self.label = f"{self.svc.llm.label}"
+        self.embeddings = self.svc.store.embedder.label
 
     def start(self, payload, on_event=None):
         from resume_optimizer.schemas import StartSessionRequest
@@ -117,11 +127,8 @@ class EmbeddedBackend:
 
 
 def embedded_provider() -> str:
-    """Decided from the current secrets on every run, so adding or changing a key takes effect without a redeploy."""
-    explicit = _secret("LLM_PROVIDER")
-    if explicit:
-        return explicit
-    return "gemini" if _secret("GEMINI_API_KEY") else "anthropic" if _secret("ANTHROPIC_API_KEY") else "mock"
+    """LLM_PROVIDER from secrets, else "auto": every provider with a key, in failover order."""
+    return _secret("LLM_PROVIDER") or "auto"
 
 
 @st.cache_resource
@@ -133,7 +140,10 @@ def get_backend(provider: str, key_fingerprint: str):
 def key_fingerprint() -> str:
     import hashlib
 
-    material = "|".join(_secret(n) for n in ("GEMINI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_MODEL", "ANTHROPIC_MODEL"))
+    names = ("GEMINI_API_KEY", "GEMINI_MODEL", "GEMINI_FALLBACK_MODELS", "OPENROUTER_API_KEY", "OPENROUTER_MODELS",
+             "OPENAI_COMPAT_BASE_URL", "OPENAI_COMPAT_API_KEY", "OPENAI_COMPAT_MODELS", "ANTHROPIC_API_KEY",
+             "ANTHROPIC_MODEL")
+    material = "|".join(_secret(n) for n in names)
     return hashlib.sha256(material.encode()).hexdigest()[:16]
 
 
@@ -174,8 +184,10 @@ with hero_col:
 
 with st.sidebar:
     st.markdown("### ⚙️ Settings")
-    st.markdown(f'<div class="ro-backend">Model backend: <b>{theme.esc(backend.label)}</b></div>',
-                unsafe_allow_html=True)
+    st.markdown(f'<div class="ro-backend">Models: <b>{theme.esc(backend.label)}</b></div>', unsafe_allow_html=True)
+    if getattr(backend, "embeddings", None):
+        st.markdown(f'<div class="ro-backend">Embeddings: <b>{theme.esc(backend.embeddings)}</b></div>',
+                    unsafe_allow_html=True)
     st.divider()
     threshold = st.slider("Reviewer pass threshold", 5.0, 10.0, 8.0, 0.5,
                           help="Drafts scoring below this go back to the Writer")
@@ -297,6 +309,17 @@ with tab_review:
             if report["strengths"]:
                 html(theme.section("Strengths"))
                 html(theme.chips(report["strengths"], "success"))
+        evidence = review.get("evidence") or []
+        if evidence:
+            weak = [e for e in evidence if not e["supported"]]
+            html(theme.section(f"Evidence check · {len(evidence) - len(weak)} of {len(evidence)} claims "
+                               "traced to your original resume"))
+            html("".join(theme.evidence_card(e["claim"], e["best_match"], e["score"]) for e in weak)
+                 or theme.chips(["Every claim matches something in your original resume"], "success"))
+            with st.expander("All claims and their closest original line"):
+                for e in evidence:
+                    mark = "✅" if e["supported"] else "⚠️"
+                    st.markdown(f"{mark} **{e['score']:.2f}** · {e['claim']}  \n↳ _{e['best_match']}_")
         html(theme.section(f"Issues ({len(report['issues'])})"))
         html("".join(theme.issue_card(i["severity"], i["section"], i["problem"], i["suggestion"])
                      for i in report["issues"]) or theme.chips(["No issues raised"], "success"))

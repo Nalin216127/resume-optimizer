@@ -3,7 +3,7 @@
 [![Live demo](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://nalin-resume-optimizer.streamlit.app)
 [![CI](https://github.com/Nalin216127/resume-optimizer/actions/workflows/ci.yml/badge.svg)](https://github.com/Nalin216127/resume-optimizer/actions/workflows/ci.yml)
 
-**Live demo:** https://nalin-resume-optimizer.streamlit.app. The demo runs in embedded mode, with an in-memory store instead of Milvus. It uses Gemini when `GEMINI_API_KEY` is set in its secrets, Claude when `ANTHROPIC_API_KEY` is set, and the offline demo agents otherwise.
+**Live demo:** https://nalin-resume-optimizer.streamlit.app. The demo runs in embedded mode, with an in-memory store instead of Milvus. It uses every LLM key in its secrets as a failover chain (Gemini, then OpenRouter, then any OpenAI-compatible API, then Claude), and the offline demo agents if there are none.
 
 A resume tailoring system built on **LangGraph**. A Supervisor coordinates Context, Writer and Reviewer agents, then pauses for a **human-in-the-loop** approval before anything is final. A **FastAPI** backend and a **Streamlit** UI sit on top. **Milvus** holds the retrieval knowledge base. The stack ships with **Docker Compose** and **Kubernetes** manifests.
 
@@ -29,21 +29,33 @@ A resume tailoring system built on **LangGraph**. A Supervisor coordinates Conte
 
 All agent outputs are Pydantic models produced through structured outputs, so they are validated before they reach graph state.
 
-## LLM providers
+## LLM providers (all hosted, with failover)
 
-Set `LLM_PROVIDER` to choose a provider:
+`LLM_PROVIDER=auto` (the default) builds a failover chain from every provider that has a key, in this order. When one provider's free quota runs out or it is overloaded, the next one answers.
 
-| `LLM_PROVIDER` | Model | Notes |
-|---|---|---|
-| `anthropic` | Claude Opus 5.5 (`ANTHROPIC_MODEL`) | Uses `messages.parse` structured outputs, with a server-side refusal fallback |
-| `gemini` | `gemini-flash-latest` (`GEMINI_MODEL`) | JSON-schema output; each agent's effort sets Gemini's thinking budget |
-| `mock` | none | Deterministic offline heuristics, used by the tests and offline demos |
+| Provider | Key | Default models | Free tier |
+|---|---|---|---|
+| Gemini | `GEMINI_API_KEY` | `gemini-flash-lite-latest`, then `gemini-flash-latest` | Daily quota per model |
+| OpenRouter | `OPENROUTER_API_KEY` | `google/gemma-4-31b-it:free`, then `nvidia/nemotron-3-super-120b-a12b:free` | 50 requests/day, 20/minute on `:free` models |
+| Any OpenAI-compatible API | `OPENAI_COMPAT_BASE_URL`, `_API_KEY`, `_MODELS` | Your choice (Groq, Together, a vLLM server, ...) | Depends on the provider |
+| Claude | `ANTHROPIC_API_KEY` | `claude-opus-5-5` | Paid |
+| Offline | none | Heuristic mock agents | Used when no key is set |
 
-Gemini specifics:
+You can also set `LLM_PROVIDER` to one name (`gemini`) or an explicit order (`openrouter,gemini`).
 
-- **Quota fallback.** Free-tier Gemini keys get about 20 requests per day per model, and one optimization uses 4–8 requests. When the main model's quota runs out, the backend switches to the models in `GEMINI_FALLBACK_MODELS` (default `gemini-flash-lite-latest`). It stops using the exhausted model until Google's reset time.
-- **Rate limits.** If Google asks for a wait of 60 s or less, the backend waits and retries.
-- **Timeouts.** Every request times out after `LLM_TIMEOUT_SECONDS` (default 180), so a dropped connection can't hang a session.
+- **Gemini.** Each agent's effort sets the thinking budget. A rate-limited, quota-exhausted or overloaded model is skipped until it recovers, and requests time out after `LLM_TIMEOUT_SECONDS`.
+- **OpenAI-compatible providers.** The JSON schema goes in the prompt, JSON mode is requested where the model supports it, and replies are validated with Pydantic, with one repair round if the JSON is wrong.
+
+## Embeddings and the evidence check
+
+With `GEMINI_API_KEY` set, retrieval uses Gemini's hosted embedding API (`gemini-embedding-001`, 768 dimensions, free tier). Nothing runs locally. If the API is unavailable at startup, the app falls back to a built-in lexical hashing embedder. Each embedder gets its own Milvus collection, so vectors from different embedders never mix.
+
+The Reviewer runs a two-stage grounding check, adapted from MedRAG's safety agent:
+
+1. Every draft bullet and summary sentence is compared with every line of the original resume using embeddings. Claims below a calibrated similarity threshold are flagged: 0.90 for Gemini embeddings, 0.35 for the hashing fallback. In calibration, true rewrites scored 0.94 or higher and invented claims 0.85 or lower.
+2. The flagged claims go to the Reviewer LLM in the call it already makes, so the check costs no extra requests. Any claim the Reviewer confirms as unsupported sends the draft back.
+
+The UI's Review tab lists each flagged claim with its closest original line. If embeddings fail mid-run, the check reruns lexically instead of being skipped.
 
 If an LLM call still fails, the session is marked `failed`. `POST /api/v1/sessions/{id}/retry` (or **Retry** in the UI) continues from the last completed agent, without re-running finished steps.
 
@@ -155,7 +167,8 @@ If `API_AUTH_TOKEN` is set, every `/api` call needs an `X-API-Key` header.
 
 See [`.env.example`](.env.example). The main settings:
 
-- `LLM_PROVIDER`: `anthropic`, `gemini` or `mock`.
+- `LLM_PROVIDER`: `auto` (failover across every provider with a key), a single provider, a comma-separated order, or `mock`.
+- `OPENROUTER_API_KEY`, `OPENROUTER_MODELS`: free hosted models on OpenRouter.
 - `ANTHROPIC_MODEL`: defaults to `claude-opus-5-5`.
 - `GEMINI_MODEL`, `GEMINI_FALLBACK_MODELS`: default to `gemini-flash-latest` and `gemini-flash-lite-latest`.
 - `CONTEXT_EFFORT`, `WRITER_EFFORT`, `REVIEWER_EFFORT`: effort level per agent. Defaults are `low`, `high` and `medium`.

@@ -10,7 +10,7 @@ import hashlib
 import logging
 import math
 import re
-from typing import Dict, List, Optional, Protocol
+from typing import Dict, List, Optional, Protocol, Union
 
 from .config import Settings
 
@@ -20,13 +20,20 @@ log = logging.getLogger(__name__)
 class HashingEmbedder:
     """Dependency-free embedding via the hashing trick over unigrams + bigrams.
 
-    Deterministic and fast; swap in a neural embedder by implementing ``embed``.
+    Deterministic and fast, but lexical: it matches shared words, not meaning. Used offline and as
+    the fallback when the hosted embedding API is unavailable.
     """
+
+    # Cosine similarity at or above which a draft claim counts as traced to the original resume.
+    # Calibrated on rewritten-but-true bullets (lowest 0.55) vs invented ones (highest 0.18).
+    support_threshold = 0.35
 
     def __init__(self, dim: int = 384):
         self.dim = dim
+        self.tag = f"hash{dim}"
+        self.label = "hashing (lexical)"
 
-    def embed(self, text: str) -> List[float]:
+    def embed(self, text: str, task: str = "RETRIEVAL_QUERY") -> List[float]:
         tokens = re.findall(r"[a-z0-9+#]+", text.lower())
         features = tokens + [f"{a}_{b}" for a, b in zip(tokens, tokens[1:])]
         vec = [0.0] * self.dim
@@ -36,8 +43,77 @@ class HashingEmbedder:
         norm = math.sqrt(sum(v * v for v in vec)) or 1.0
         return [v / norm for v in vec]
 
+    def embed_many(self, texts: List[str], task: str = "RETRIEVAL_DOCUMENT") -> List[List[float]]:
+        return [self.embed(t, task) for t in texts]
+
+
+class GeminiEmbedder:
+    """Semantic embeddings from Gemini's hosted embedding API (free tier; nothing runs locally).
+
+    Batches requests, caches repeated texts (the same resume is embedded on every review) and
+    L2-normalises vectors, which Google recommends for reduced output dimensions.
+    """
+
+    # Calibrated on gemini-embedding-001 at 768 dims: true claims scored >= 0.94, invented ones <= 0.85.
+    support_threshold = 0.90
+    BATCH = 100
+    CACHE_LIMIT = 4096
+
+    def __init__(self, settings: Settings):
+        from google import genai
+        from google.genai import types
+
+        self._types = types
+        self.client = genai.Client(api_key=settings.gemini_api_key, http_options=types.HttpOptions(timeout=30_000))
+        self.model = settings.gemini_embedding_model
+        self.dim = settings.gemini_embedding_dim
+        self.tag = f"gemini{self.dim}"
+        self.label = f"Gemini {self.model}"
+        self._cache: Dict[tuple, List[float]] = {}
+
+    def embed(self, text: str, task: str = "RETRIEVAL_QUERY") -> List[float]:
+        return self.embed_many([text], task)[0]
+
+    def embed_many(self, texts: List[str], task: str = "RETRIEVAL_DOCUMENT") -> List[List[float]]:
+        missing = list(dict.fromkeys(t for t in texts if (task, t) not in self._cache))
+        for i in range(0, len(missing), self.BATCH):
+            chunk = missing[i:i + self.BATCH]
+            result = self.client.models.embed_content(
+                model=self.model, contents=chunk,
+                config=self._types.EmbedContentConfig(task_type=task, output_dimensionality=self.dim),
+            )
+            for text, emb in zip(chunk, result.embeddings):
+                values = list(emb.values)
+                norm = math.sqrt(sum(v * v for v in values)) or 1.0
+                self._cache[(task, text)] = [v / norm for v in values]
+        if len(self._cache) > self.CACHE_LIMIT:
+            self._cache = dict(list(self._cache.items())[-self.CACHE_LIMIT // 2:])
+        return [self._cache[(task, t)] for t in texts]
+
+
+Embedder = Union[HashingEmbedder, GeminiEmbedder]
+
+
+def build_embedder(settings: Settings) -> Embedder:
+    backend = settings.embedding_backend
+    if backend == "auto":
+        backend = "gemini" if settings.gemini_api_key else "hash"
+    if backend == "gemini":
+        try:
+            embedder = GeminiEmbedder(settings)
+            embedder.embed("startup check")  # fail fast here rather than mid-request
+            log.info("Using %s embeddings (dim=%d)", embedder.model, embedder.dim)
+            return embedder
+        except Exception as exc:  # noqa: BLE001 - any failure means fall back
+            log.warning("Gemini embeddings unavailable (%s); falling back to the hashing embedder", exc)
+    elif backend != "hash":
+        raise ValueError(f"Unknown EMBEDDING_BACKEND: {settings.embedding_backend}")
+    return HashingEmbedder(settings.embedding_dim)
+
 
 class KnowledgeStore(Protocol):
+    embedder: Embedder
+
     def add(self, docs: List[Dict[str, str]]) -> int: ...
     def search(self, query: str, k: int, kind: Optional[str] = None) -> List[Dict[str, object]]: ...
     def count(self) -> int: ...
@@ -45,17 +121,17 @@ class KnowledgeStore(Protocol):
 
 
 class InMemoryStore:
-    def __init__(self, embedder: HashingEmbedder):
+    def __init__(self, embedder: Embedder):
         self.embedder = embedder
         self.rows: List[Dict[str, object]] = []
 
     def add(self, docs):
-        for d in docs:
-            self.rows.append({**d, "vector": self.embedder.embed(f"{d['title']} {d['text']}")})
+        vectors = self.embedder.embed_many([f"{d['title']} {d['text']}" for d in docs], "RETRIEVAL_DOCUMENT")
+        self.rows.extend({**d, "vector": v} for d, v in zip(docs, vectors))
         return len(docs)
 
     def search(self, query, k, kind=None):
-        q = self.embedder.embed(query)
+        q = self.embedder.embed(query, "RETRIEVAL_QUERY")
         scored = [
             ({key: r[key] for key in ("title", "text", "kind")}, sum(a * b for a, b in zip(q, r["vector"])))
             for r in self.rows
@@ -72,11 +148,13 @@ class InMemoryStore:
 
 
 class MilvusStore:
-    def __init__(self, settings: Settings, embedder: HashingEmbedder):
+    def __init__(self, settings: Settings, embedder: Embedder):
         from pymilvus import MilvusClient
 
         self.embedder = embedder
-        self.collection = settings.milvus_collection
+        # One collection per embedder (e.g. resume_knowledge_gemini768): vectors from different
+        # embedders or dimensions must never share a collection.
+        self.collection = f"{settings.milvus_collection}_{embedder.tag}"
         self.client = MilvusClient(uri=settings.milvus_uri, token=settings.milvus_token or "")
         if not self.client.has_collection(self.collection):
             # Quick-setup schema: auto int64 id + float vector; title/text/kind live in dynamic fields.
@@ -90,10 +168,10 @@ class MilvusStore:
             log.info("Created Milvus collection %s (dim=%d)", self.collection, embedder.dim)
 
     def add(self, docs):
+        vectors = self.embedder.embed_many([f"{d['title']} {d['text']}" for d in docs], "RETRIEVAL_DOCUMENT")
         rows = [
-            {"vector": self.embedder.embed(f"{d['title']} {d['text']}"), "title": d["title"], "text": d["text"],
-             "kind": d.get("kind", "guideline")}
-            for d in docs
+            {"vector": v, "title": d["title"], "text": d["text"], "kind": d.get("kind", "guideline")}
+            for d, v in zip(docs, vectors)
         ]
         result = self.client.insert(collection_name=self.collection, data=rows)
         return int(result.get("insert_count", len(rows)))
@@ -101,7 +179,7 @@ class MilvusStore:
     def search(self, query, k, kind=None):
         hits = self.client.search(
             collection_name=self.collection,
-            data=[self.embedder.embed(query)],
+            data=[self.embedder.embed(query, "RETRIEVAL_QUERY")],
             limit=k,
             filter=f'kind == "{kind}"' if kind else "",
             output_fields=["title", "text", "kind"],
@@ -158,7 +236,7 @@ SEED_KNOWLEDGE: List[Dict[str, str]] = [
 
 
 def build_store(settings: Settings) -> KnowledgeStore:
-    embedder = HashingEmbedder(settings.embedding_dim)
+    embedder = build_embedder(settings)
     store: KnowledgeStore
     if settings.vector_backend == "milvus":
         store = MilvusStore(settings, embedder)

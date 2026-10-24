@@ -64,6 +64,15 @@ class ReviewReport(BaseModel):
     possible_fabrications: List[str] = Field(description="Claims in the draft not supported by the original resume")
 
 
+class EvidenceItem(BaseModel):
+    """One draft claim and the closest line of the original resume (embedding similarity)."""
+
+    claim: str
+    best_match: str
+    score: float
+    supported: bool
+
+
 class ReviewResult(BaseModel):
     """Reviewer output after deterministic grounding is blended in (stored in state)."""
 
@@ -71,6 +80,7 @@ class ReviewResult(BaseModel):
     keyword_coverage: float
     overall: float
     verdict: Literal["pass", "revise"]
+    evidence: List[EvidenceItem] = []
 
 
 # ---------------------------------------------------------------- API contracts
