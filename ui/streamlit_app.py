@@ -61,8 +61,8 @@ class ApiBackend:
     def retry(self, sid, on_event=None):
         return self._call("POST", f"/api/v1/sessions/{sid}/retry")
 
-    def provider_status(self):
-        return self._call("GET", "/api/v1/providers")
+    def provider_status(self, every_model=False):
+        return self._call("GET", "/api/v1/providers", params={"every_model": str(every_model).lower()})
 
     def extract(self, name, data):
         return self._call("POST", "/api/v1/extract-text", files={"file": (name, data)})["text"]
@@ -114,8 +114,8 @@ class EmbeddedBackend:
         except ValueError as exc:
             raise RuntimeError(str(exc)) from exc
 
-    def provider_status(self):
-        return self.svc.provider_status()
+    def provider_status(self, every_model=False):
+        return self.svc.provider_status(every_model)
 
     def retry(self, sid, on_event=None):
         try:
@@ -147,6 +147,12 @@ def get_backend(provider: str, key_fingerprint: str):
 def cached_provider_status(provider: str, key_fingerprint: str):
     # Cached for 10 minutes so repeated clicks by visitors can't burn the free quotas.
     return get_backend(provider, key_fingerprint).provider_status()
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def cached_model_status(provider: str, key_fingerprint: str):
+    # One request per model, so cached for an hour.
+    return get_backend(provider, key_fingerprint).provider_status(every_model=True)
 
 
 def key_fingerprint() -> str:
@@ -207,10 +213,15 @@ with st.sidebar:
                          help="Writer ⇄ Reviewer rounds before the draft comes to you")
     target_role = st.text_input("Target role (optional)", placeholder="e.g. Senior AI Engineer")
     with st.expander("Provider status"):
-        st.caption("Sends one tiny request to each model provider. Results are cached for 10 minutes.")
-        if st.button("Check providers", use_container_width=True):
+        st.caption("Check providers sends one tiny request per provider (cached 10 min). "
+                   "Test every model sends one per model (cached 1 hour).")
+        a, b = st.columns(2)
+        if a.button("Check providers", use_container_width=True):
             with st.spinner("Checking…"):
                 ss.provider_status = cached_provider_status(embedded_provider(), key_fingerprint())
+        if b.button("Test every model", use_container_width=True):
+            with st.spinner("Testing each model…"):
+                ss.provider_status = cached_model_status(embedded_provider(), key_fingerprint())
         for row in ss.get("provider_status", []):
             mark = "✅" if row["ok"] else "❌"
             st.markdown(f"{mark} **{row['provider']}** · {row['seconds']}s")

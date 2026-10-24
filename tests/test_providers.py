@@ -170,3 +170,21 @@ def test_compat_error_includes_provider_reason():
     g = compat(err, models=("m1",))
     with pytest.raises(LLMError, match="data policy"):
         call(g)
+
+
+
+def test_every_model_check_reports_each_model():
+    from resume_optimizer.llm import check_providers
+
+    g = compat(status_error(openai.RateLimitError, 429), chat_reply('{"ok": true}'), models=("busy", "good"))
+    rows = check_providers(g, every_model=True)
+    assert [(r["provider"], r["ok"]) for r in rows] == [("OpenRouter / busy", False), ("OpenRouter / good", True)]
+    assert "rate limited" in rows[0]["detail"]
+
+
+def test_quick_check_names_the_model_that_answered():
+    from resume_optimizer.llm import check_providers
+
+    g = compat(status_error(openai.RateLimitError, 429), chat_reply('{"ok": true}'), models=("busy", "good"))
+    rows = check_providers(g)
+    assert rows == [{"provider": "OpenRouter", "ok": True, "seconds": rows[0]["seconds"], "detail": "answered by good"}]

@@ -62,9 +62,9 @@ def readyz(svc: ResumeService = Depends(get_service)):
 
 
 @app.get("/api/v1/providers", dependencies=[Depends(require_auth)], tags=["ops"])
-def provider_status(svc: ResumeService = Depends(get_service)):
-    """Send one tiny request to each configured LLM provider and report which ones answer."""
-    return svc.provider_status()
+def provider_status(every_model: bool = False, svc: ResumeService = Depends(get_service)):
+    """Report which LLM providers answer. ``every_model=true`` tests each configured model (one request each)."""
+    return svc.provider_status(every_model)
 
 
 @app.post("/api/v1/sessions", response_model=SessionView, dependencies=[Depends(require_auth)], tags=["sessions"])

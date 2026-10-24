@@ -174,6 +174,24 @@ class GeminiLLM:
         except ValueError as exc:
             raise LLMError(f"{task}: Gemini returned output that does not match the schema") from exc
 
+    def check_each_model(self) -> List[Dict[str, Any]]:
+        """One tiny request per configured model, ignoring cooldowns (for the status panel)."""
+        from .schemas import HealthCheck
+
+        config = self._types.GenerateContentConfig(response_mime_type="application/json",
+                                                   response_json_schema=HealthCheck.model_json_schema())
+        rows = []
+        for model in self.models:
+            started = time.monotonic()
+            try:
+                self._generate("health", model, 'Return {"ok": true}.', config, attempts=1)
+                rows.append({"provider": f"Gemini / {model}", "ok": True, "detail": ""})
+            except (_QuotaExhausted, LLMError) as exc:
+                rows.append({"provider": f"Gemini / {model}", "ok": False,
+                             "detail": getattr(exc, "reason", None) or str(exc)[:300]})
+            rows[-1]["seconds"] = round(time.monotonic() - started, 1)
+        return rows
+
     def _generate_with_fallback(self, task, prompt, config):
         now = time.time()
         available = [m for m in self.models if self._exhausted_until.get(m, 0) <= now]
@@ -201,6 +219,7 @@ class GeminiLLM:
             try:
                 response = self.client.models.generate_content(model=model, contents=prompt, config=config)
                 log.info("gemini %s: %s %.1fs (attempt %d)", task, model, time.monotonic() - started, attempt + 1)
+                self.last_model = model
                 return response
             except self._errors.APIError as exc:
                 delay = _retry_delay(exc)
@@ -278,11 +297,31 @@ class OpenAICompatLLM:
                 log.warning("%s %s: %s", self.label, task, exc)
         raise LLMError(f"{task}: {self.label} unavailable ({'; '.join(errors) or 'all models cooling down'})")
 
+    def check_each_model(self) -> List[Dict[str, Any]]:
+        """One tiny request per configured model, ignoring cooldowns (for the status panel)."""
+        from .schemas import HealthCheck
+
+        messages = [{"role": "system", "content": 'Reply with the JSON object {"ok": true} only.'},
+                    {"role": "user", "content": "Health check."}]
+        rows = []
+        for model in self.models:
+            started = time.monotonic()
+            try:
+                self._answer("health", model, messages, HealthCheck)
+                rows.append({"provider": f"{self.label} / {model}", "ok": True, "detail": ""})
+            except (_QuotaExhausted, LLMError) as exc:
+                rows.append({"provider": f"{self.label} / {model}", "ok": False,
+                             "detail": getattr(exc, "reason", None) or str(exc)[:300]})
+            rows[-1]["seconds"] = round(time.monotonic() - started, 1)
+        return rows
+
     def _answer(self, task, model, messages, schema):
         for attempt in range(2):
             text = self._complete(task, model, messages)
             try:
-                return schema.model_validate_json(_extract_json(text))
+                result = schema.model_validate_json(_extract_json(text))
+                self.last_model = model
+                return result
             except ValueError as exc:
                 if attempt == 1:
                     raise LLMError(f"returned JSON that does not match the schema") from exc
@@ -509,19 +548,29 @@ def build_llm(settings: Settings) -> LLM:
     return providers[0] if len(providers) == 1 else ChainLLM(providers)
 
 
-def check_providers(llm: LLM) -> List[Dict[str, Any]]:
-    """Send one tiny structured request to each provider in the chain; report which ones answer."""
+def check_providers(llm: LLM, every_model: bool = False) -> List[Dict[str, Any]]:
+    """Check which providers answer.
+
+    By default each provider gets one tiny request (its fallbacks still apply) and the row names the
+    model that answered. With ``every_model`` each configured model is tested separately, which costs
+    one request per model.
+    """
     from .schemas import HealthCheck
 
-    results = []
+    results: List[Dict[str, Any]] = []
     for provider in getattr(llm, "providers", [llm]):
+        label = getattr(provider, "label", type(provider).__name__)
+        if every_model and hasattr(provider, "check_each_model"):
+            results.extend(provider.check_each_model())
+            continue
         started = time.monotonic()
         try:
             provider.structured(task="health", system="You are a health check.", prompt='Return {"ok": true}.',
                                 schema=HealthCheck, payload={}, effort="low")
-            ok, detail = True, ""
+            used = getattr(provider, "last_model", None)
+            ok, detail = True, f"answered by {used}" if used else ""
         except LLMError as exc:
             ok, detail = False, str(exc)[:900]
-        results.append({"provider": getattr(provider, "label", type(provider).__name__), "ok": ok,
-                        "seconds": round(time.monotonic() - started, 1), "detail": detail})
+        results.append({"provider": label, "ok": ok, "seconds": round(time.monotonic() - started, 1),
+                        "detail": detail})
     return results

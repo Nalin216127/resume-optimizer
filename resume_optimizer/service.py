@@ -114,8 +114,8 @@ class ResumeService:
             error=error,
         )
 
-    def provider_status(self) -> List[Dict[str, Any]]:
-        return check_providers(self.llm)
+    def provider_status(self, every_model: bool = False) -> List[Dict[str, Any]]:
+        return check_providers(self.llm, every_model)
 
     def add_knowledge(self, docs: List[KnowledgeDoc]) -> int:
         return self.store.add([d.model_dump() for d in docs])
