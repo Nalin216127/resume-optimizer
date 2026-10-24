@@ -99,6 +99,8 @@ class StartSessionRequest(BaseModel):
     resume_text: str = Field(min_length=50)
     job_description: str = Field(min_length=50)
     target_role: Optional[str] = None
+    # Optional client-chosen id, so a client that loses its connection mid-run can still find the session.
+    session_id: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{32}$")
     quality_threshold: Optional[float] = Field(default=None, ge=0, le=10)
     max_auto_revisions: Optional[int] = Field(default=None, ge=0, le=5)
 

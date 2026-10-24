@@ -167,3 +167,12 @@ def test_progress_callback_reports_each_agent(service):
     assert view.status == "awaiting_human"
     assert [a for a in events if a != "supervisor"] == ["context", "writer", "reviewer"]
     assert len(events) == len(view.history)
+
+
+
+def test_client_chosen_session_id(service):
+    sid = "a" * 32
+    view = start(service, session_id=sid)
+    assert view.session_id == sid
+    with pytest.raises(ValueError, match="already exists"):
+        start(service, session_id=sid)

@@ -41,6 +41,13 @@ def test_provider_status(client):
     assert rows == [{"provider": "offline demo agents", "ok": True, "seconds": rows[0]["seconds"], "detail": ""}]
 
 
+def test_start_with_session_id(client):
+    body = {"resume_text": SAMPLE_RESUME, "job_description": SAMPLE_JOB, "session_id": "b" * 32}
+    assert client.post("/api/v1/sessions", json=body).json()["session_id"] == "b" * 32
+    assert client.post("/api/v1/sessions", json=body).status_code == 409
+    assert client.post("/api/v1/sessions", json={**body, "session_id": "not-hex"}).status_code == 422
+
+
 def test_errors(client):
     assert client.get("/api/v1/sessions/missing").status_code == 404
     assert client.post("/api/v1/sessions", json={"resume_text": "short", "job_description": "short"}).status_code == 422

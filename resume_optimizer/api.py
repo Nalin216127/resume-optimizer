@@ -70,7 +70,10 @@ def provider_status(every_model: bool = False, svc: ResumeService = Depends(get_
 @app.post("/api/v1/sessions", response_model=SessionView, dependencies=[Depends(require_auth)], tags=["sessions"])
 def start_session(req: StartSessionRequest, svc: ResumeService = Depends(get_service)):
     """Run Supervisor → Context → Writer ⇄ Reviewer until the draft needs human approval."""
-    return svc.start(req)
+    try:
+        return svc.start(req)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc))
 
 
 @app.get("/api/v1/sessions/{session_id}", response_model=SessionView, dependencies=[Depends(require_auth)],

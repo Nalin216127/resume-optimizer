@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import sys
+import uuid
 from pathlib import Path
 from typing import Any, Dict
 
@@ -60,6 +61,9 @@ class ApiBackend:
 
     def retry(self, sid, on_event=None):
         return self._call("POST", f"/api/v1/sessions/{sid}/retry")
+
+    def get(self, sid):
+        return self._call("GET", f"/api/v1/sessions/{sid}")
 
     def provider_status(self, every_model=False):
         return self._call("GET", "/api/v1/providers", params={"every_model": str(every_model).lower()})
@@ -116,6 +120,9 @@ class EmbeddedBackend:
 
     def provider_status(self, every_model=False):
         return self.svc.provider_status(every_model)
+
+    def get(self, sid):
+        return self.svc.get(sid).model_dump()
 
     def retry(self, sid, on_event=None):
         try:
@@ -198,6 +205,18 @@ if "theme_choice" in ss and ss.theme_choice is None:
     # The active option was clicked again and deselected: re-select the current mode.
     ss.theme_choice = next(k for k, v in THEME_OPTIONS.items() if v == ss.theme_mode)
 
+if ss.get("inflight_sid"):
+    # The previous script run never finished its backend call: a reconnect (tab in the background,
+    # phone locked) restarted the page mid-run. The steps that finished are checkpointed, so show the
+    # session; a stalled one offers Retry, which continues from the last completed step.
+    sid, ss.inflight_sid = ss.inflight_sid, None
+    try:
+        ss.session = backend.get(sid)
+        ss.last_error = None
+        ss.interrupted_notice = True
+    except Exception:  # noqa: BLE001 - nothing was checkpointed yet; let the user start again
+        ss.last_error = "The run was interrupted before its first step finished. Please start it again."
+
 s = ss.session
 status = s["status"] if s else None
 
@@ -267,9 +286,15 @@ AGENT_LABELS = {"supervisor": "🧭 Supervisor", "context": "🎯 Context", "wri
                 "reviewer": "🔍 Reviewer", "human": "🧑 You"}
 
 
-def run(fn, *args):
-    """Run a backend call, streaming each agent step into a status panel as it finishes."""
+def run(fn, *args, session_id: str):
+    """Run a backend call, streaming each agent step into a status panel as it finishes.
+
+    ``session_id`` is remembered until the call returns, so a run cut short by a reconnect can be
+    recovered on the next page load.
+    """
     ss.last_error = None
+    ss.interrupted_notice = False
+    ss.inflight_sid = session_id
     status_box = st.status("Agents are working…", expanded=True)
 
     def on_event(agent: str, message: str) -> None:
@@ -286,6 +311,7 @@ def run(fn, *args):
     except Exception as exc:  # noqa: BLE001 - surface any backend failure in the UI
         ss.last_error = f"Request failed: {exc}"
         status_box.update(label="Request failed", state="error")
+    ss.inflight_sid = None
 
 
 def html(markup: str) -> None:
@@ -294,6 +320,10 @@ def html(markup: str) -> None:
 
 if ss.get("last_error"):
     st.error(ss.last_error)
+if ss.get("interrupted_notice") and s is not None:
+    st.info("Your last run was interrupted (the page reconnected, e.g. after switching tabs). "
+            + ("Press Retry to continue from the last completed step." if status == "failed" else
+               "It had already finished, so here are the results."))
 
 # ----------------------------------------------------------------- input page
 if s is None:
@@ -315,10 +345,11 @@ if s is None:
             ss.job_text = st.text_area("Job description", ss.job_text, height=505)
     st.write("")
     if st.button("✨ Optimize my resume", type="primary", use_container_width=True):
+        new_sid = uuid.uuid4().hex
         run(backend.start, {
             "resume_text": ss.resume_text, "job_description": ss.job_text, "target_role": target_role or None,
-            "quality_threshold": threshold, "max_auto_revisions": max_auto,
-        })
+            "quality_threshold": threshold, "max_auto_revisions": max_auto, "session_id": new_sid,
+        }, session_id=new_sid)
         st.rerun()
     st.stop()
 
@@ -340,7 +371,7 @@ html(theme.stats([
 if s.get("error"):
     st.error(s["error"])
 if status == "failed" and st.button("🔁 Retry from the last completed step", type="primary"):
-    run(backend.retry, s["session_id"])
+    run(backend.retry, s["session_id"], session_id=s["session_id"])
     st.rerun()
 
 tab_draft, tab_review, tab_context, tab_trace, tab_original = st.tabs(
@@ -420,8 +451,8 @@ if status == "awaiting_human":
                                 placeholder="e.g. Lead with the RAG search project and keep the summary to two sentences")
         a, b = st.columns(2)
         if a.button("✅ Approve draft", type="primary", use_container_width=True):
-            run(backend.feedback, s["session_id"], "approve", "")
+            run(backend.feedback, s["session_id"], "approve", "", session_id=s["session_id"])
             st.rerun()
         if b.button("✏️ Request revision", use_container_width=True, disabled=not feedback.strip()):
-            run(backend.feedback, s["session_id"], "revise", feedback)
+            run(backend.feedback, s["session_id"], "revise", feedback, session_id=s["session_id"])
             st.rerun()

@@ -52,7 +52,9 @@ class ResumeService:
         return self.get(session_id)
 
     def start(self, req: StartSessionRequest, on_event: Optional[ProgressCallback] = None) -> SessionView:
-        session_id = uuid.uuid4().hex
+        session_id = req.session_id or uuid.uuid4().hex
+        if req.session_id and self.graph.get_state(self._config(session_id)).values:
+            raise ValueError("A session with this id already exists")
         initial = {
             "resume_text": req.resume_text,
             "job_description": req.job_description,
