@@ -20,6 +20,9 @@ if str(ROOT) not in sys.path:
 
 from resume_optimizer.samples import SAMPLE_JOB, SAMPLE_RESUME  # noqa: E402
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import theme  # noqa: E402
+
 
 def _secret(name: str, default: str = "") -> str:
     try:
@@ -141,56 +144,73 @@ ss = st.session_state
 ss.setdefault("session", None)
 ss.setdefault("resume_text", SAMPLE_RESUME)
 ss.setdefault("job_text", SAMPLE_JOB)
+if "dark" not in ss:
+    # ?theme=light in the URL survives reloads and shared links.
+    ss.dark = st.query_params.get("theme", "dark") != "light"
+
+s = ss.session
+status = s["status"] if s else None
+
+hero_col, toggle_col = st.columns([5, 1], vertical_alignment="top")
+with toggle_col:
+    dark = st.toggle("🌙 Dark" if ss.dark else "☀️ Light", key="dark")
+st.query_params["theme"] = "dark" if dark else "light"
+st.markdown(theme.page_css("dark" if dark else "light"), unsafe_allow_html=True)
+with hero_col:
+    st.markdown(theme.hero(status), unsafe_allow_html=True)
 
 with st.sidebar:
-    st.header("Settings")
-    st.caption(f"Backend: {backend.label}")
-    threshold = st.slider("Reviewer pass threshold", 5.0, 10.0, 8.0, 0.5)
-    max_auto = st.slider("Max automatic revisions", 0, 5, 2)
-    target_role = st.text_input("Target role (optional)")
-    if st.button("Start over", use_container_width=True):
+    st.markdown("### ⚙️ Settings")
+    st.markdown(f'<div class="ro-backend">Model backend: <b>{theme.esc(backend.label)}</b></div>',
+                unsafe_allow_html=True)
+    st.divider()
+    threshold = st.slider("Reviewer pass threshold", 5.0, 10.0, 8.0, 0.5,
+                          help="Drafts scoring below this go back to the Writer")
+    max_auto = st.slider("Max automatic revisions", 0, 5, 2,
+                         help="Writer ⇄ Reviewer rounds before the draft comes to you")
+    target_role = st.text_input("Target role (optional)", placeholder="e.g. Senior AI Engineer")
+    st.divider()
+    if st.button("↺ Start over", use_container_width=True):
         ss.session = None
         st.rerun()
-    st.divider()
-    st.markdown(
-        "**Agents**\n\n"
-        "1. **Supervisor** routes work\n2. **Context** reads the job + retrieves guidance from Milvus\n"
-        "3. **Writer** tailors the resume\n4. **Reviewer** scores it and sends it back if needed\n"
-        "5. **You** approve or request changes"
-    )
-
-st.title("📄 Multi-Agent Resume Optimizer")
 
 
 def run(fn, *args):
     ss.last_error = None
     try:
-        with st.spinner("Agents are working…"):
+        with st.spinner("Agents are working… this can take a minute"):
             ss.session = fn(*args)
     except Exception as exc:  # noqa: BLE001 - surface any backend failure in the UI
         ss.last_error = f"Request failed: {exc}"
 
 
+def html(markup: str) -> None:
+    st.markdown(markup, unsafe_allow_html=True)
+
+
 if ss.get("last_error"):
     st.error(ss.last_error)
 
-
-if ss.session is None:
-    left, right = st.columns(2)
+# ----------------------------------------------------------------- input page
+if s is None:
+    left, right = st.columns(2, gap="large")
     with left:
-        st.subheader("Your resume")
-        upload = st.file_uploader("Upload PDF / TXT / MD", type=["pdf", "txt", "md"])
-        if upload is not None and ss.get("_uploaded") != upload.name:
-            try:
-                ss.resume_text = backend.extract(upload.name, upload.getvalue())
-                ss._uploaded = upload.name
-            except Exception as exc:  # noqa: BLE001
-                st.error(f"Could not read file: {exc}")
-        ss.resume_text = st.text_area("Resume text", ss.resume_text, height=420)
+        with st.container(border=True, key="card_resume"):
+            html(theme.section("📄 Your resume"))
+            upload = st.file_uploader("Upload PDF / TXT / MD", type=["pdf", "txt", "md"])
+            if upload is not None and ss.get("_uploaded") != upload.name:
+                try:
+                    ss.resume_text = backend.extract(upload.name, upload.getvalue())
+                    ss._uploaded = upload.name
+                except Exception as exc:  # noqa: BLE001
+                    st.error(f"Could not read file: {exc}")
+            ss.resume_text = st.text_area("Or paste it here", ss.resume_text, height=400)
     with right:
-        st.subheader("Job description")
-        ss.job_text = st.text_area("Job description text", ss.job_text, height=500)
-    if st.button("Optimize resume", type="primary", use_container_width=True):
+        with st.container(border=True, key="card_job"):
+            html(theme.section("🎯 Target job"))
+            ss.job_text = st.text_area("Job description", ss.job_text, height=505)
+    st.write("")
+    if st.button("✨ Optimize my resume", type="primary", use_container_width=True):
         run(backend.start, {
             "resume_text": ss.resume_text, "job_description": ss.job_text, "target_role": target_role or None,
             "quality_threshold": threshold, "max_auto_revisions": max_auto,
@@ -198,71 +218,95 @@ if ss.session is None:
         st.rerun()
     st.stop()
 
-s = ss.session
-status_badge = {"awaiting_human": "🟡 Your turn", "approved": "🟢 Approved",
-                "failed": "🔴 Failed", "running": "🔵 Running"}[s["status"]]
+# --------------------------------------------------------------- results page
 review = s.get("review") or {}
-c1, c2, c3, c4 = st.columns([1.4, 1, 1, 1])
-c1.metric("Status", status_badge, help="Your turn = the draft is waiting for you to approve it or request changes")
-c2.metric("Overall score", f"{review.get('overall', 0):.1f} / 10")
-c3.metric("Keyword coverage", f"{review.get('keyword_coverage', 0):.0%}")
-c4.metric("Writer passes", s.get("revision_count", 0))
+status_pill = {
+    "awaiting_human": theme.pill("● Your turn", "info"),
+    "approved": theme.pill("✓ Approved", "success"),
+    "failed": theme.pill("✕ Failed", "danger"),
+    "running": theme.pill("● Running", "info"),
+}[status]
+overall = review.get("overall", 0.0)
+html(theme.stats([
+    {"label": "Status", "html": status_pill},
+    {"label": "Overall score", "html": theme.stat_value(f"{overall:.1f}", "/ 10")},
+    {"label": "Keyword coverage", "html": theme.stat_value(f"{review.get('keyword_coverage', 0):.0%}")},
+    {"label": "Writer passes", "html": theme.stat_value(str(s.get("revision_count", 0)))},
+]))
 if s.get("error"):
     st.error(s["error"])
-if s["status"] == "failed" and st.button("🔁 Retry from the last completed step", type="primary"):
+if status == "failed" and st.button("🔁 Retry from the last completed step", type="primary"):
     run(backend.retry, s["session_id"])
     st.rerun()
 
 tab_draft, tab_review, tab_context, tab_trace, tab_original = st.tabs(
-    ["Draft", "Review", "Context", "Agent trace", "Original"])
+    ["📝 Draft", "📊 Review", "🎯 Context", "🧭 Agent trace", "📄 Original"])
 
 with tab_draft:
     if s.get("draft_markdown"):
-        st.markdown(s["draft_markdown"])
-        with st.expander("What changed"):
+        with st.container(border=True, key="paper"):
+            st.markdown(s["draft_markdown"])
+        a, b = st.columns([3, 1], vertical_alignment="center")
+        with a.expander("What changed in this version"):
             for change in s["draft"]["change_log"]:
                 st.markdown(f"- {change}")
-        st.download_button("Download markdown", s["draft_markdown"], file_name="optimized_resume.md")
+        b.download_button("⬇ Download .md", s["draft_markdown"], file_name="optimized_resume.md",
+                          use_container_width=True)
 
 with tab_review:
     if review:
         report = review["report"]
-        for name, score in report["scores"].items():
-            st.progress(min(score / 10, 1.0), text=f"{name.replace('_', ' ').title()}: {score:.1f}")
-        if report["possible_fabrications"]:
-            st.warning("Possible unsupported claims:\n\n" + "\n".join(f"- {f}" for f in report["possible_fabrications"]))
-        if report["missing_keywords"]:
-            st.info("Missing keywords: " + ", ".join(report["missing_keywords"]))
-        for issue in report["issues"]:
-            icon = {"high": "🔴", "medium": "🟠", "low": "🟢"}[issue["severity"]]
-            st.markdown(f"{icon} **{issue['section']}** — {issue['problem']}  \n↳ _{issue['suggestion']}_")
+        left, right = st.columns([1, 1], gap="large")
+        with left:
+            html(theme.section("Rubric scores"))
+            html("".join(theme.bar(name.replace("_", " ").title(), score) for name, score in report["scores"].items()))
+        with right:
+            if report["possible_fabrications"]:
+                html(theme.warning_card("Possibly unsupported claims", report["possible_fabrications"]))
+            html(theme.section("Missing keywords"))
+            html(theme.chips(report["missing_keywords"], "danger"))
+            if report["strengths"]:
+                html(theme.section("Strengths"))
+                html(theme.chips(report["strengths"], "success"))
+        html(theme.section(f"Issues ({len(report['issues'])})"))
+        html("".join(theme.issue_card(i["severity"], i["section"], i["problem"], i["suggestion"])
+                     for i in report["issues"]) or theme.chips(["No issues raised"], "success"))
 
 with tab_context:
     if s.get("context"):
         ctx = s["context"]
-        a, b = st.columns(2)
-        a.markdown("**Must-have keywords**\n\n" + ", ".join(ctx["must_have_keywords"]))
-        a.markdown("**Nice to have**\n\n" + ", ".join(ctx["nice_to_have_keywords"]))
-        b.markdown("**Strengths found**\n\n" + "\n".join(f"- {x}" for x in ctx["candidate_strengths"]))
-        b.markdown("**Gaps**\n\n" + "\n".join(f"- {x}" for x in ctx["gaps"]))
-        st.markdown("**Writing guidance**\n\n" + "\n".join(f"- {x}" for x in ctx["writing_guidance"]))
+        html(f'<p class="ro-sub">Targeting <b>{theme.esc(ctx["target_role"])}</b> · seniority '
+             f'<b>{theme.esc(ctx["seniority"])}</b></p>')
+        a, b = st.columns(2, gap="large")
+        with a:
+            html(theme.section("Must-have keywords") + theme.chips(ctx["must_have_keywords"]))
+            html(theme.section("Nice to have") + theme.chips(ctx["nice_to_have_keywords"]))
+        with b:
+            html(theme.section("Evidence found in your resume") + theme.chips(ctx["candidate_strengths"], "success"))
+            html(theme.section("Gaps") + theme.chips(ctx["gaps"], "danger"))
+        html(theme.section("Writing guidance (retrieved from the knowledge base)"))
+        for tip in ctx["writing_guidance"]:
+            st.markdown(f"- {tip}")
 
 with tab_trace:
-    for event in s.get("history", []):
-        st.markdown(f"`{event['agent']:>10}` {event['message']}")
+    html(theme.timeline(s.get("history", [])))
 
 with tab_original:
-    st.text(ss.resume_text)
+    with st.container(border=True, key="original"):
+        st.text(ss.resume_text)
 
-if s["status"] == "awaiting_human":
-    st.divider()
-    st.subheader("Your decision")
-    feedback = st.text_area("Feedback for the Writer (required to request a revision)",
-                            placeholder="e.g. Emphasise the RAG search project and shorten the summary")
-    a, b = st.columns(2)
-    if a.button("✅ Approve", type="primary", use_container_width=True):
-        run(backend.feedback, s["session_id"], "approve", "")
-        st.rerun()
-    if b.button("✏️ Request revision", use_container_width=True, disabled=not feedback.strip()):
-        run(backend.feedback, s["session_id"], "revise", feedback)
-        st.rerun()
+if status == "awaiting_human":
+    st.write("")
+    with st.container(border=True, key="decision"):
+        html(theme.section("🧑‍⚖️ Your decision"))
+        st.caption("Approve the draft as it is, or tell the Writer what to change. "
+                   "A revision runs another Writer → Reviewer round.")
+        feedback = st.text_area("Feedback for the Writer", label_visibility="collapsed",
+                                placeholder="e.g. Lead with the RAG search project and keep the summary to two sentences")
+        a, b = st.columns(2)
+        if a.button("✅ Approve draft", type="primary", use_container_width=True):
+            run(backend.feedback, s["session_id"], "approve", "")
+            st.rerun()
+        if b.button("✏️ Request revision", use_container_width=True, disabled=not feedback.strip()):
+            run(backend.feedback, s["session_id"], "revise", feedback)
+            st.rerun()
