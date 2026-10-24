@@ -5,6 +5,7 @@ import json
 
 from ..config import Settings
 from ..llm import LLM
+from ..retrieval import HybridRetriever
 from ..schemas import ResumeDraft
 from ..state import ResumeState
 from ..textutils import render_markdown
@@ -23,8 +24,17 @@ or human feedback is provided, address every point and say how in the change log
 priority over reviewer feedback."""
 
 
-def make_writer_agent(llm: LLM, settings: Settings):
+def find_exemplars(retriever: HybridRetriever, state: ResumeState) -> list:
+    """Example bullets for this role: one focused hybrid query per required skill, fused with RRF."""
+    ctx = state["context"]
+    queries = list(ctx.get("must_have_keywords", [])[:8])
+    queries.append(f"{ctx.get('target_role', '')} {' '.join(ctx.get('candidate_strengths', [])[:3])}")
+    return retriever.multi_search(queries, k=5, kind="example_bullet", roles=state.get("target_roles") or None)
+
+
+def make_writer_agent(llm: LLM, settings: Settings, retriever: HybridRetriever):
     def writer_agent(state: ResumeState) -> dict:
+        exemplars = state.get("exemplars") or find_exemplars(retriever, state)
         # The latest human feedback stays in force for every pass of the round, including reviewer-driven ones.
         human_feedback = state.get("human_feedback")
         review = state.get("review") if state.get("draft") else None
@@ -34,11 +44,20 @@ def make_writer_agent(llm: LLM, settings: Settings):
             "previous_draft": state.get("draft"),
             "review": review,
             "human_feedback": human_feedback,
+            "exemplars": exemplars,
         }
         parts = [
             f"<original_resume>\n{state['resume_text']}\n</original_resume>",
             f"<context_brief>\n{json.dumps(state['context'], indent=2)}\n</context_brief>",
         ]
+        if exemplars:
+            listed = "\n".join(f"- {e['text']}" for e in exemplars)
+            parts.append(
+                "<reference_bullets>\nStrong bullets from other people's resumes for this kind of role, retrieved "
+                "from the knowledge base. Use them only as models of structure, verbs and how impact is phrased. "
+                "Never copy their facts, numbers, tools, employers or achievements into this candidate's resume."
+                f"\n{listed}\n</reference_bullets>"
+            )
         if state.get("draft"):
             parts.append(f"<previous_draft>\n{state['draft_markdown']}\n</previous_draft>")
         if review:
@@ -52,6 +71,7 @@ def make_writer_agent(llm: LLM, settings: Settings):
         version = state.get("draft_version", 0) + 1
         triggered_by_reviewer = bool(state.get("draft")) and not state.get("revision_requested")
         return {
+            "exemplars": exemplars,
             "draft": draft.model_dump(),
             "draft_markdown": render_markdown(draft),
             "draft_version": version,

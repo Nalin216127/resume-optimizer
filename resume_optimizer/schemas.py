@@ -5,7 +5,7 @@ validated before they ever reach graph state.
 """
 from __future__ import annotations
 
-from typing import List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -114,6 +114,10 @@ class KnowledgeDoc(BaseModel):
     title: str
     text: str = Field(min_length=10)
     kind: Literal["guideline", "example_bullet", "role_profile"] = "guideline"
+    id: Optional[str] = None
+    roles: List[str] = Field(default_factory=lambda: ["any"], description="Role families, e.g. backend, ml_ai; 'any' for all")
+    seniority: Literal["any", "junior", "mid", "senior"] = "any"
+    skills: List[str] = Field(default_factory=list)
 
 
 class KnowledgeIngestRequest(BaseModel):
@@ -134,4 +138,8 @@ class SessionView(BaseModel):
     draft_markdown: Optional[str] = None
     review: Optional[ReviewResult] = None
     history: List[AgentEvent] = []
+    # RAG sources: knowledge used by the Context agent and example bullets given to the Writer.
+    retrieved: List[Dict[str, Any]] = []
+    exemplars: List[Dict[str, Any]] = []
+    target_roles: List[str] = []
     error: Optional[str] = None

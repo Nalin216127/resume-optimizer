@@ -7,7 +7,7 @@ from ..config import Settings
 from ..llm import LLM
 from ..schemas import ContextBrief
 from ..state import ResumeState
-from ..vectorstore import KnowledgeStore
+from ..retrieval import HybridRetriever
 
 SYSTEM = """You are the Context agent in a resume optimization team. You analyse a job description \
 against a candidate's resume and produce a brief that the Writer agent will follow.
@@ -18,12 +18,25 @@ evidences and which it does not. Turn the retrieved best-practice notes into sho
 for this specific candidate. Base strengths only on what the resume actually says."""
 
 
-def make_context_agent(llm: LLM, store: KnowledgeStore, settings: Settings):
+def detect_seniority(text: str) -> str:
+    low = text.lower()
+    if any(w in low for w in ("principal", "staff ", "lead ", "senior", "sr.", "head of")):
+        return "senior"
+    if any(w in low for w in ("junior", "graduate", "new grad", "entry level", "entry-level", "intern")):
+        return "junior"
+    return "mid"
+
+
+def make_context_agent(llm: LLM, retriever: HybridRetriever, settings: Settings):
     def context_agent(state: ResumeState) -> dict:
         query = f"{state.get('target_role') or ''}\n{state['job_description']}"
-        k = settings.retrieval_top_k
-        retrieved = store.search(query, k=k // 2, kind="guideline") + store.search(query, k=k - k // 2)
-        retrieved = list({d["text"]: d for d in retrieved}.values())  # dedupe across the two queries
+        roles = retriever.detect_roles(query)
+        seniority = detect_seniority(f"{state.get('target_role') or ''} {state['job_description'][:600]}")
+        # The role's hiring profile, plus guidelines that fit this job and seniority (hybrid search).
+        profiles = retriever.search(query, k=1, kind="role_profile", roles=roles or None)
+        guidelines = retriever.search(query, k=max(settings.retrieval_top_k - 1, 3), kind="guideline",
+                                      seniority=seniority)
+        retrieved = profiles + guidelines
 
         payload = {
             "resume_text": state["resume_text"],
@@ -41,9 +54,12 @@ def make_context_agent(llm: LLM, store: KnowledgeStore, settings: Settings):
                                payload=payload, effort=settings.context_effort)
         return {
             "retrieved": retrieved,
+            "target_roles": roles,
+            "seniority": seniority,
             "context": brief.model_dump(),
             "history": [{"agent": "context", "message": (
-                f"Retrieved {len(retrieved)} knowledge entries; {len(brief.must_have_keywords)} must-have keywords, "
+                f"Detected role {', '.join(roles) or 'unknown'} ({seniority}); retrieved {len(retrieved)} knowledge entries "
+                f"(hybrid search); {len(brief.must_have_keywords)} must-have keywords, "
                 f"{len(brief.gaps)} gaps")}],
         }
 

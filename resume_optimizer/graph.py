@@ -20,7 +20,7 @@ from .agents import human_review, make_context_agent, make_reviewer_agent, make_
 from .config import Settings
 from .llm import LLM
 from .state import ResumeState
-from .vectorstore import KnowledgeStore
+from .retrieval import HybridRetriever
 
 log = logging.getLogger(__name__)
 
@@ -49,12 +49,12 @@ def build_checkpointer(settings: Settings) -> BaseCheckpointSaver:
     raise ValueError(f"Unknown CHECKPOINT_BACKEND: {backend}")
 
 
-def build_graph(llm: LLM, store: KnowledgeStore, settings: Settings, checkpointer: BaseCheckpointSaver):
+def build_graph(llm: LLM, retriever: HybridRetriever, settings: Settings, checkpointer: BaseCheckpointSaver):
     g = StateGraph(ResumeState)
     g.add_node("supervisor", supervisor)
-    g.add_node("context", make_context_agent(llm, store, settings))
-    g.add_node("writer", make_writer_agent(llm, settings))
-    g.add_node("reviewer", make_reviewer_agent(llm, settings, store.embedder))
+    g.add_node("context", make_context_agent(llm, retriever, settings))
+    g.add_node("writer", make_writer_agent(llm, settings, retriever))
+    g.add_node("reviewer", make_reviewer_agent(llm, settings, retriever.store.embedder))
     g.add_node("human", human_review)
 
     g.add_edge(START, "supervisor")

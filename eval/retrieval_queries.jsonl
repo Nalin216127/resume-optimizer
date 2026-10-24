@@ -1,0 +1,40 @@
+{"query": "Kubernetes Helm Argo CD deployments", "relevant": ["ex-devops-01"], "style": "exact"}
+{"query": "speed up a slow API using caching", "relevant": ["ex-backend-01"], "style": "paraphrase"}
+{"query": "make our website load faster", "relevant": ["ex-frontend-02"], "style": "paraphrase"}
+{"query": "stop customers being charged twice", "relevant": ["ex-backend-02"], "style": "paraphrase"}
+{"query": "LangGraph agents with human approval", "relevant": ["ex-ml_ai-02"], "style": "exact"}
+{"query": "chatbot that answers questions from company documents", "relevant": ["ex-ml_ai-01"], "style": "paraphrase"}
+{"query": "lower our cloud bill", "relevant": ["ex-devops-06", "ex-data_eng-05"], "style": "paraphrase"}
+{"query": "Terraform infrastructure as code", "relevant": ["ex-devops-02"], "style": "exact"}
+{"query": "tests that randomly fail", "relevant": ["ex-qa-05"], "style": "paraphrase"}
+{"query": "screen reader support for blind users", "relevant": ["ex-mobile-07", "ex-frontend-04", "ex-design-04"], "style": "paraphrase"}
+{"query": "Airflow Spark ETL runtime", "relevant": ["ex-data_eng-01"], "style": "exact"}
+{"query": "pricing experiment that increased revenue", "relevant": ["ex-data_sci-01", "ex-product-04"], "style": "paraphrase"}
+{"query": "app keeps crashing on iPhone", "relevant": ["ex-mobile-01"], "style": "paraphrase"}
+{"query": "Android cold start Kotlin", "relevant": ["ex-mobile-02"], "style": "exact"}
+{"query": "SOC 2 compliance controls", "relevant": ["ex-security-05"], "style": "exact"}
+{"query": "employees log in with single sign-on and two-factor", "relevant": ["ex-security-03"], "style": "paraphrase"}
+{"query": "fine-tune an open model with LoRA", "relevant": ["ex-ml_ai-04"], "style": "exact"}
+{"query": "check LLM answer quality before shipping prompt changes", "relevant": ["ex-ml_ai-03"], "style": "paraphrase"}
+{"query": "predict how much stock each store needs", "relevant": ["ex-data_sci-02"], "style": "paraphrase"}
+{"query": "group customers into personas for marketing", "relevant": ["ex-data_sci-04"], "style": "paraphrase"}
+{"query": "dbt Snowflake data modeling", "relevant": ["ex-data_eng-02"], "style": "exact"}
+{"query": "Kafka Flink streaming ingestion", "relevant": ["ex-data_eng-03"], "style": "exact"}
+{"query": "Figma component library design system", "relevant": ["ex-design-02", "ex-frontend-03"], "style": "exact"}
+{"query": "fewer steps to pay on a phone", "relevant": ["ex-design-03"], "style": "paraphrase"}
+{"query": "interview users and map their journey", "relevant": ["ex-design-07"], "style": "paraphrase"}
+{"query": "load test revealed a bottleneck", "relevant": ["ex-qa-04"], "style": "paraphrase"}
+{"query": "turn more free trial users into paying customers", "relevant": ["ex-product-01"], "style": "paraphrase"}
+{"query": "translate the app into other languages", "relevant": ["ex-frontend-08"], "style": "paraphrase"}
+{"query": "passwords and keys committed to git", "relevant": ["ex-security-08"], "style": "paraphrase"}
+{"query": "SLOs error budgets Prometheus Grafana alerting", "relevant": ["ex-devops-04"], "style": "exact"}
+{"query": "app works without internet for field workers", "relevant": ["ex-mobile-03"], "style": "paraphrase"}
+{"query": "PostgreSQL indexes slow queries", "relevant": ["ex-backend-05"], "style": "exact"}
+{"query": "Debezium", "relevant": ["ex-data_eng-06"], "style": "rare_term"}
+{"query": "GuardDuty Security Hub", "relevant": ["ex-security-07"], "style": "rare_term"}
+{"query": "k6", "relevant": ["ex-qa-04"], "style": "rare_term"}
+{"query": "Great Expectations", "relevant": ["ex-data_eng-04"], "style": "rare_term"}
+{"query": "Fastlane", "relevant": ["ex-mobile-08"], "style": "rare_term"}
+{"query": "i18next", "relevant": ["ex-frontend-08"], "style": "rare_term"}
+{"query": "Loki OpenTelemetry", "relevant": ["ex-devops-08"], "style": "rare_term"}
+{"query": "RICE scoring", "relevant": ["ex-product-10"], "style": "rare_term"}

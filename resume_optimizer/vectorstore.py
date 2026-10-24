@@ -6,11 +6,17 @@ and hands them to the Writer as grounded guidance.
 """
 from __future__ import annotations
 
+import base64
 import hashlib
+import json
 import logging
 import math
 import re
-from typing import Dict, List, Optional, Protocol, Union
+import time
+import uuid
+from array import array
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Protocol, Union
 
 from .config import Settings
 
@@ -27,6 +33,8 @@ class HashingEmbedder:
     # Cosine similarity at or above which a draft claim counts as traced to the original resume.
     # Calibrated on rewritten-but-true bullets (lowest 0.55) vs invented ones (highest 0.18).
     support_threshold = 0.35
+    # Lexical vectors rank worse than BM25 (eval hit@1 0.57 vs 0.82), so BM25 leads hybrid search.
+    preferred_method = "keyword"
 
     def __init__(self, dim: int = 384):
         self.dim = dim
@@ -50,45 +58,99 @@ class HashingEmbedder:
 class GeminiEmbedder:
     """Semantic embeddings from Gemini's hosted embedding API (free tier; nothing runs locally).
 
-    Batches requests, caches repeated texts (the same resume is embedded on every review) and
-    L2-normalises vectors, which Google recommends for reduced output dimensions.
+    The free tier allows about 100 embedded texts per minute, and every text in a batch counts.
+    So the knowledge base ships with precomputed vectors (data/embeddings-<model>-<dim>.jsonl) and
+    start-up makes no embedding calls; anything not precomputed is embedded on demand in small
+    batches, waiting out per-minute limits. Repeated texts are cached (the same resume is embedded
+    on every review) and vectors are L2-normalised, as Google recommends for reduced dimensions.
     """
 
     # Calibrated on gemini-embedding-001 at 768 dims: true claims scored >= 0.94, invented ones <= 0.85.
     support_threshold = 0.90
-    BATCH = 100
+    preferred_method = "semantic"   # eval hit@1 1.00 vs 0.82 for BM25
+    BATCH = 90
     CACHE_LIMIT = 4096
 
     def __init__(self, settings: Settings):
         from google import genai
-        from google.genai import types
+        from google.genai import errors, types
 
-        self._types = types
+        self._types, self._errors = types, errors
         self.client = genai.Client(api_key=settings.gemini_api_key, http_options=types.HttpOptions(timeout=30_000))
         self.model = settings.gemini_embedding_model
         self.dim = settings.gemini_embedding_dim
         self.tag = f"gemini{self.dim}"
         self.label = f"Gemini {self.model}"
         self._cache: Dict[tuple, List[float]] = {}
+        self._precomputed = load_precomputed(precomputed_path(self.model, self.dim))
+        # Seconds to wait out a per-minute limit. 0 during user requests, so callers fall back at once
+        # (retrieval to keyword search, the evidence check to lexical vectors); offline scripts raise it.
+        self.max_wait = 0
 
     def embed(self, text: str, task: str = "RETRIEVAL_QUERY") -> List[float]:
         return self.embed_many([text], task)[0]
 
     def embed_many(self, texts: List[str], task: str = "RETRIEVAL_DOCUMENT") -> List[List[float]]:
+        for t in texts:
+            if (task, t) not in self._cache:
+                vec = self._precomputed.get(cache_key(task, t))
+                if vec is not None:
+                    self._cache[(task, t)] = vec
         missing = list(dict.fromkeys(t for t in texts if (task, t) not in self._cache))
         for i in range(0, len(missing), self.BATCH):
             chunk = missing[i:i + self.BATCH]
-            result = self.client.models.embed_content(
-                model=self.model, contents=chunk,
-                config=self._types.EmbedContentConfig(task_type=task, output_dimensionality=self.dim),
-            )
-            for text, emb in zip(chunk, result.embeddings):
-                values = list(emb.values)
+            for text, values in zip(chunk, self._embed_api(chunk, task)):
                 norm = math.sqrt(sum(v * v for v in values)) or 1.0
                 self._cache[(task, text)] = [v / norm for v in values]
+        result = [self._cache[(task, t)] for t in texts]
         if len(self._cache) > self.CACHE_LIMIT:
             self._cache = dict(list(self._cache.items())[-self.CACHE_LIMIT // 2:])
-        return [self._cache[(task, t)] for t in texts]
+        return result
+
+    def _embed_api(self, chunk: List[str], task: str) -> List[List[float]]:
+        from .llm import _retry_delay
+
+        for attempt in range(3):
+            try:
+                response = self.client.models.embed_content(
+                    model=self.model, contents=chunk,
+                    config=self._types.EmbedContentConfig(task_type=task, output_dimensionality=self.dim),
+                )
+                return [list(e.values) for e in response.embeddings]
+            except self._errors.APIError as exc:
+                delay = _retry_delay(exc)
+                if exc.code == 429 and delay is not None and delay <= self.max_wait and attempt < 2:
+                    log.warning("Embedding rate limit; waiting %.0fs", delay)
+                    time.sleep(delay + 1)
+                    continue
+                raise
+        raise RuntimeError("unreachable")
+
+
+def cache_key(task: str, text: str) -> str:
+    return hashlib.sha256(f"{task}\n{text}".encode()).hexdigest()[:32]
+
+
+def precomputed_path(model: str, dim: int) -> Path:
+    return Path(__file__).parent / "data" / f"embeddings-{model}-{dim}.jsonl"
+
+
+def load_precomputed(path: Path) -> Dict[str, List[float]]:
+    """Vectors stored as base64 float32, keyed by cache_key(task, text)."""
+    if not path.exists():
+        return {}
+    out: Dict[str, List[float]] = {}
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            row = json.loads(line)
+            out[row["key"]] = list(array("f", base64.b64decode(row["v"])))
+    return out
+
+
+def save_precomputed(path: Path, items: Dict[str, List[float]]) -> None:
+    with open(path, "w", encoding="utf-8") as f:
+        for key, vec in items.items():
+            f.write(json.dumps({"key": key, "v": base64.b64encode(array("f", vec).tobytes()).decode()}) + "\n")
 
 
 Embedder = Union[HashingEmbedder, GeminiEmbedder]
@@ -114,31 +176,56 @@ def build_embedder(settings: Settings) -> Embedder:
 class KnowledgeStore(Protocol):
     embedder: Embedder
 
-    def add(self, docs: List[Dict[str, str]]) -> int: ...
-    def search(self, query: str, k: int, kind: Optional[str] = None) -> List[Dict[str, object]]: ...
+    def add(self, docs: List[Dict[str, Any]]) -> int: ...
+    def search(self, query: str, k: int, kind: Optional[str] = None) -> List[Dict[str, Any]]: ...
+    def all_docs(self) -> List[Dict[str, Any]]: ...
     def count(self) -> int: ...
     def healthy(self) -> bool: ...
+
+
+# Metadata kept with every knowledge entry (besides the vector).
+DOC_FIELDS = ("id", "kind", "title", "text", "roles", "seniority", "skills")
+
+
+def _normalise_doc(d: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "id": d.get("id") or f"doc-{uuid.uuid4().hex[:12]}",
+        "kind": d.get("kind", "guideline"),
+        "title": d["title"],
+        "text": d["text"],
+        "roles": list(d.get("roles") or ["any"]),
+        "seniority": d.get("seniority", "any"),
+        "skills": list(d.get("skills") or []),
+    }
+
+
+def _embed_text(d: Dict[str, Any]) -> str:
+    return f"{d['title']}. {d['text']} Skills: {', '.join(d.get('skills') or [])}"
 
 
 class InMemoryStore:
     def __init__(self, embedder: Embedder):
         self.embedder = embedder
-        self.rows: List[Dict[str, object]] = []
+        self.rows: List[Dict[str, Any]] = []
 
     def add(self, docs):
-        vectors = self.embedder.embed_many([f"{d['title']} {d['text']}" for d in docs], "RETRIEVAL_DOCUMENT")
+        docs = [_normalise_doc(d) for d in docs]
+        vectors = self.embedder.embed_many([_embed_text(d) for d in docs], "RETRIEVAL_DOCUMENT")
         self.rows.extend({**d, "vector": v} for d, v in zip(docs, vectors))
         return len(docs)
 
     def search(self, query, k, kind=None):
         q = self.embedder.embed(query, "RETRIEVAL_QUERY")
         scored = [
-            ({key: r[key] for key in ("title", "text", "kind")}, sum(a * b for a, b in zip(q, r["vector"])))
+            ({f: r[f] for f in DOC_FIELDS}, sum(a * b for a, b in zip(q, r["vector"])))
             for r in self.rows
             if kind is None or r["kind"] == kind
         ]
         scored.sort(key=lambda x: x[1], reverse=True)
         return [{**doc, "score": round(score, 4)} for doc, score in scored[:k]]
+
+    def all_docs(self):
+        return [{f: r[f] for f in DOC_FIELDS} for r in self.rows]
 
     def count(self):
         return len(self.rows)
@@ -148,16 +235,18 @@ class InMemoryStore:
 
 
 class MilvusStore:
+    QUERY_LIMIT = 16384  # Milvus caps unfiltered query results
+
     def __init__(self, settings: Settings, embedder: Embedder):
         from pymilvus import MilvusClient
 
         self.embedder = embedder
-        # One collection per embedder (e.g. resume_knowledge_gemini768): vectors from different
-        # embedders or dimensions must never share a collection.
-        self.collection = f"{settings.milvus_collection}_{embedder.tag}"
+        # One collection per embedder and knowledge-base version (e.g. resume_knowledge_gemini768_kb2):
+        # vectors from different embedders, dimensions or corpora must never share a collection.
+        self.collection = f"{settings.milvus_collection}_{embedder.tag}_{KNOWLEDGE_VERSION}"
         self.client = MilvusClient(uri=settings.milvus_uri, token=settings.milvus_token or "")
         if not self.client.has_collection(self.collection):
-            # Quick-setup schema: auto int64 id + float vector; title/text/kind live in dynamic fields.
+            # Quick-setup schema: auto int64 pk + float vector; metadata lives in dynamic fields.
             self.client.create_collection(
                 collection_name=self.collection,
                 dimension=embedder.dim,
@@ -168,13 +257,19 @@ class MilvusStore:
             log.info("Created Milvus collection %s (dim=%d)", self.collection, embedder.dim)
 
     def add(self, docs):
-        vectors = self.embedder.embed_many([f"{d['title']} {d['text']}" for d in docs], "RETRIEVAL_DOCUMENT")
-        rows = [
-            {"vector": v, "title": d["title"], "text": d["text"], "kind": d.get("kind", "guideline")}
-            for d, v in zip(docs, vectors)
-        ]
+        docs = [_normalise_doc(d) for d in docs]
+        vectors = self.embedder.embed_many([_embed_text(d) for d in docs], "RETRIEVAL_DOCUMENT")
+        # The Milvus primary key is auto-generated, so the knowledge id is stored as doc_id.
+        rows = [{"vector": v, **{("doc_id" if f == "id" else f): d[f] for f in DOC_FIELDS}} for d, v in zip(docs, vectors)]
         result = self.client.insert(collection_name=self.collection, data=rows)
         return int(result.get("insert_count", len(rows)))
+
+    def _out_fields(self) -> List[str]:
+        return ["doc_id"] + [f for f in DOC_FIELDS if f != "id"]
+
+    @staticmethod
+    def _from_row(row: Dict[str, Any]) -> Dict[str, Any]:
+        return {f: (row.get("doc_id") if f == "id" else row.get(f)) for f in DOC_FIELDS}
 
     def search(self, query, k, kind=None):
         hits = self.client.search(
@@ -182,9 +277,14 @@ class MilvusStore:
             data=[self.embedder.embed(query, "RETRIEVAL_QUERY")],
             limit=k,
             filter=f'kind == "{kind}"' if kind else "",
-            output_fields=["title", "text", "kind"],
+            output_fields=self._out_fields(),
         )
-        return [{**hit["entity"], "score": round(float(hit["distance"]), 4)} for hit in hits[0]]
+        return [{**self._from_row(hit["entity"]), "score": round(float(hit["distance"]), 4)} for hit in hits[0]]
+
+    def all_docs(self):
+        rows = self.client.query(self.collection, filter="", output_fields=self._out_fields(),
+                                 limit=self.QUERY_LIMIT, consistency_level="Strong")
+        return [self._from_row(r) for r in rows]
 
     def count(self):
         # count(*) with Strong consistency sees unflushed inserts; collection stats can lag behind.
@@ -199,40 +299,18 @@ class MilvusStore:
             return False
 
 
-SEED_KNOWLEDGE: List[Dict[str, str]] = [
-    {"kind": "guideline", "title": "XYZ bullet formula",
-     "text": "Write bullets as: accomplished X, measured by Y, by doing Z. Lead with the outcome, then the method."},
-    {"kind": "guideline", "title": "Quantify impact",
-     "text": "Quantify impact with percentages, revenue, latency, cost savings, users served or time saved. Never invent numbers; use scale words if no metric exists."},
-    {"kind": "guideline", "title": "Strong action verbs",
-     "text": "Open each bullet with a strong past-tense action verb such as Architected, Led, Reduced, Shipped, Automated. Avoid 'responsible for' and 'worked on'."},
-    {"kind": "guideline", "title": "ATS keyword alignment",
-     "text": "Mirror exact keywords and tool names from the job description where the candidate genuinely has the experience. ATS parsers match literal terms."},
-    {"kind": "guideline", "title": "ATS-safe formatting",
-     "text": "Use standard headings (Summary, Experience, Projects, Education, Skills), single column, no tables or images, consistent date formats."},
-    {"kind": "guideline", "title": "Concise bullets",
-     "text": "Keep bullets to one or two lines, roughly 12 to 28 words. Three to six bullets per role, most recent role gets the most."},
-    {"kind": "guideline", "title": "Tailored summary",
-     "text": "The summary should name the target role, years of experience, two or three signature strengths and one headline achievement."},
-    {"kind": "guideline", "title": "Truthfulness",
-     "text": "Never fabricate employers, titles, dates, metrics or skills. Rephrase and reorder real experience; flag gaps instead of hiding them."},
-    {"kind": "example_bullet", "title": "Backend engineering",
-     "text": "Reduced p99 API latency 45% by redesigning the caching layer with Redis and async I/O in FastAPI, serving 2M daily requests."},
-    {"kind": "example_bullet", "title": "ML / LLM engineering",
-     "text": "Architected a retrieval-augmented generation pipeline over Milvus, improving answer accuracy 22% on internal evals while cutting token cost 30%."},
-    {"kind": "example_bullet", "title": "Platform / DevOps",
-     "text": "Migrated 40 services to Kubernetes with Helm and GitHub Actions CI/CD, cutting deploy time from 45 to 8 minutes."},
-    {"kind": "example_bullet", "title": "Data engineering",
-     "text": "Built Airflow and Spark data pipelines processing 3TB/day, raising data freshness SLA from 24h to 1h."},
-    {"kind": "example_bullet", "title": "Leadership",
-     "text": "Led a cross-functional team of 6 engineers to ship a self-serve onboarding flow, lifting activation 18% in one quarter."},
-    {"kind": "role_profile", "title": "AI / ML Engineer",
-     "text": "Hiring managers look for LLM application development, LangChain or LangGraph agents, vector databases, evaluation, Python, model deployment and MLOps."},
-    {"kind": "role_profile", "title": "Backend Engineer",
-     "text": "Hiring managers look for API design, distributed systems, SQL and NoSQL databases, caching, observability, testing and cloud deployment."},
-    {"kind": "role_profile", "title": "Data Scientist",
-     "text": "Hiring managers look for statistics, experimentation and A/B testing, SQL, Python, machine learning, and communicating insights to stakeholders."},
-]
+# Bump when data/knowledge.jsonl changes in a way existing Milvus collections should not keep.
+KNOWLEDGE_VERSION = "kb2"
+KNOWLEDGE_FILE = Path(__file__).parent / "data" / "knowledge.jsonl"
+
+
+def load_knowledge(path: Path = KNOWLEDGE_FILE) -> List[Dict[str, Any]]:
+    """The built-in knowledge base: guidelines, role profiles and example bullets tagged by role."""
+    with open(path, encoding="utf-8") as f:
+        return [json.loads(line) for line in f if line.strip()]
+
+
+SEED_KNOWLEDGE: List[Dict[str, Any]] = load_knowledge()
 
 
 def build_store(settings: Settings) -> KnowledgeStore:

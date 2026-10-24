@@ -11,6 +11,7 @@ from .config import Settings, get_settings
 from .graph import build_checkpointer, build_graph
 from .llm import LLM, LLMError, build_llm, check_providers
 from .schemas import FeedbackRequest, KnowledgeDoc, SessionView, StartSessionRequest
+from .retrieval import HybridRetriever
 from .vectorstore import KnowledgeStore, build_store
 
 log = logging.getLogger(__name__)
@@ -33,7 +34,8 @@ class ResumeService:
         self.settings = settings or get_settings()
         self.llm = llm or build_llm(self.settings)
         self.store = store or build_store(self.settings)
-        self.graph = build_graph(self.llm, self.store, self.settings, build_checkpointer(self.settings))
+        self.retriever = HybridRetriever(self.store)
+        self.graph = build_graph(self.llm, self.retriever, self.settings, build_checkpointer(self.settings))
 
     def _config(self, session_id: str) -> Dict[str, Any]:
         return {"configurable": {"thread_id": session_id}, "recursion_limit": RECURSION_LIMIT}
@@ -113,6 +115,9 @@ class ResumeService:
             draft_markdown=values.get("draft_markdown"),
             review=values.get("review"),
             history=values.get("history", []),
+            retrieved=values.get("retrieved", []),
+            exemplars=values.get("exemplars", []),
+            target_roles=values.get("target_roles", []),
             error=error,
         )
 
@@ -120,4 +125,4 @@ class ResumeService:
         return check_providers(self.llm, every_model)
 
     def add_knowledge(self, docs: List[KnowledgeDoc]) -> int:
-        return self.store.add([d.model_dump() for d in docs])
+        return self.retriever.add([d.model_dump() for d in docs])  # also refreshes the keyword index

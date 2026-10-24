@@ -46,16 +46,29 @@ You can also set `LLM_PROVIDER` to one name (`gemini`) or an explicit order (`op
 - **Gemini.** Each agent's effort sets the thinking budget. A rate-limited, quota-exhausted or overloaded model is skipped until it recovers, and requests time out after `LLM_TIMEOUT_SECONDS`.
 - **OpenAI-compatible providers.** The JSON schema goes in the prompt, JSON mode is requested where the model supports it, and replies are validated with Pydantic, with one repair round if the JSON is wrong.
 
-## Embeddings and the evidence check
+## RAG: knowledge base, hybrid retrieval and evidence check
 
-With `GEMINI_API_KEY` set, retrieval uses Gemini's hosted embedding API (`gemini-embedding-001`, 768 dimensions, free tier). Nothing runs locally. If the API is unavailable at startup, the app falls back to a built-in lexical hashing embedder. Each embedder gets its own Milvus collection, so vectors from different embedders never mix.
+**Knowledge base.** `resume_optimizer/data/knowledge.jsonl` holds 151 original entries: 30 writing guidelines, 11 role profiles and 110 example bullets across 11 role families (backend, frontend, ML/AI, data engineering, data science, DevOps/SRE, mobile, security, QA, product, design). Each entry is tagged with roles, seniority and skills. You can add more through `POST /api/v1/knowledge`.
 
-The Reviewer runs a two-stage grounding check, adapted from MedRAG's safety agent:
+**Embeddings.** With `GEMINI_API_KEY` set, retrieval uses Gemini's hosted `gemini-embedding-001` (768 dimensions).
 
-1. Every draft bullet and summary sentence is compared with every line of the original resume using embeddings. Claims below a calibrated similarity threshold are flagged: 0.90 for Gemini embeddings, 0.35 for the hashing fallback. In calibration, true rewrites scored 0.94 or higher and invented claims 0.85 or lower.
-2. The flagged claims go to the Reviewer LLM in the call it already makes, so the check costs no extra requests. Any claim the Reviewer confirms as unsupported sends the draft back.
+- The knowledge base ships with **precomputed vectors**, so start-up makes no embedding calls. That matters because the free tier allows about 100 embedded texts per minute.
+- After editing the knowledge base, run `python scripts/precompute_embeddings.py` to refresh them.
+- Without a key, a lexical hashing embedder is used instead.
+- Milvus uses one collection per embedder and knowledge-base version.
 
-The UI's Review tab lists each flagged claim with its closest original line. If embeddings fail mid-run, the check reruns lexically instead of being skipped.
+**Retrieval** (`resume_optimizer/retrieval.py`) combines semantic search with BM25 keyword search, filtered by role, seniority and entry type. Every result records which method found it.
+
+- **Context agent:** detects the job's role family and seniority, then retrieves that role's hiring profile and fitting guidelines.
+- **Writer agent:** runs one focused query per required skill, fuses the results, and receives the top 5 **example bullets** directly. They serve as models of structure and phrasing, and the Writer is told never to copy their facts.
+- **UI:** the Context tab's **Sources** panel shows everything retrieved, with semantic and keyword badges.
+
+**How the two searches are combined was decided by measurement** (see [eval/RESULTS.md](eval/RESULTS.md)). On 40 labelled queries with Gemini embeddings, semantic search scored hit@1 1.00, BM25 0.82, and Reciprocal Rank Fusion 0.90 to 0.93. The default is therefore an embedder-aware **cascade**: the stronger method ranks the results, and the other adds what it missed. BM25 takes over if the embedding API is rate limited.
+
+**Evidence check.** The Reviewer runs a two-stage grounding check, adapted from MedRAG's safety agent:
+
+1. Every draft bullet and summary sentence is compared with the lines of the original resume using embeddings. Claims below a calibrated threshold are flagged: 0.90 for Gemini, 0.35 for the hashing fallback. In calibration, true rewrites scored 0.94 or higher and invented claims 0.85 or lower.
+2. The flagged claims go to the Reviewer LLM in the call it already makes. Any claim it confirms as unsupported sends the draft back.
 
 If an LLM call still fails, the session is marked `failed`. `POST /api/v1/sessions/{id}/retry` (or **Retry** in the UI) continues from the last completed agent, without re-running finished steps.
 

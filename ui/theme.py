@@ -261,6 +261,12 @@ button[role="tab"][aria-selected="true"] p {{ color: var(--ro-accent); font-weig
 .ro-event .who {{ font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; color: var(--dot); }}
 .ro-event .what {{ font-size: .9rem; color: var(--ro-text); }}
 .ro-backend {{ font-size: .8rem; color: var(--ro-muted); }}
+.ro-src-head {{ display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; font-weight: 600; color: var(--ro-text); font-size: .9rem; }}
+.ro-kind {{ font-size: .68rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; padding: .12rem .45rem;
+  border-radius: 6px; background: var(--ro-chip); color: var(--ro-accent); }}
+.ro-method {{ font-size: .7rem; font-weight: 600; padding: .1rem .45rem; border-radius: 999px; border: 1px solid var(--ro-border); color: var(--ro-muted); }}
+.ro-method.semantic {{ color: var(--ro-accent); border-color: var(--ro-accent); }}
+.ro-method.keyword {{ color: var(--ro-success); border-color: var(--ro-success); }}
 .ro-backend b {{ color: var(--ro-accent); }}
 </style>"""
 
@@ -365,4 +371,18 @@ def evidence_card(claim: str, best_match: str, score: float) -> str:
         f'<div class="ro-card warning"><div class="head">⚠️ Not clearly traced to your resume</div>'
         f'<div class="body">{esc(claim)}</div>'
         f'<div class="hint">Closest original line ({score:.2f} similarity): {esc(best_match)}</div></div>'
+    )
+
+
+KIND_LABELS = {"guideline": "Guideline", "role_profile": "Role profile", "example_bullet": "Example bullet"}
+
+
+def source_card(doc: Dict[str, object]) -> str:
+    methods = "".join(f'<span class="ro-method {esc(m)}">{esc(m)}</span>' for m in doc.get("matched_by") or [])
+    queries = doc.get("queries") or []
+    hint = f'<div class="hint">Matched queries: {esc(", ".join(queries))}</div>' if queries else ""
+    return (
+        f'<div class="ro-card"><div class="ro-src-head"><span class="ro-kind">'
+        f'{esc(KIND_LABELS.get(str(doc.get("kind")), doc.get("kind")))}</span>{esc(doc.get("title", ""))}{methods}</div>'
+        f'<div class="body">{esc(doc.get("text", ""))}</div>{hint}</div>'
     )

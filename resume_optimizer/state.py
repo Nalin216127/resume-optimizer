@@ -16,7 +16,10 @@ class ResumeState(TypedDict, total=False):
     max_auto_revisions: int
 
     # Agent outputs (stored as plain dicts so checkpoints serialise cleanly)
-    retrieved: List[Dict[str, Any]]
+    retrieved: List[Dict[str, Any]]       # knowledge used by the Context agent (role profile + guidelines)
+    exemplars: List[Dict[str, Any]]       # example bullets retrieved for the Writer
+    target_roles: List[str]               # detected role families, e.g. ["ml_ai"]
+    seniority: str
     context: Dict[str, Any]
     draft: Dict[str, Any]
     draft_markdown: str

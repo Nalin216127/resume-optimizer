@@ -430,9 +430,26 @@ with tab_context:
         with b:
             html(theme.section("Evidence found in your resume") + theme.chips(ctx["candidate_strengths"], "success"))
             html(theme.section("Gaps") + theme.chips(ctx["gaps"], "danger"))
-        html(theme.section("Writing guidance (retrieved from the knowledge base)"))
+        html(theme.section("Writing guidance (distilled from retrieved knowledge)"))
         for tip in ctx["writing_guidance"]:
             st.markdown(f"- {tip}")
+
+        # ---- RAG sources: what the hybrid retriever actually returned
+        html(theme.section("Sources · retrieved from the knowledge base"))
+        roles = s.get("target_roles") or []
+        if roles:
+            html('<p class="ro-sub">Detected role family: ' + " ".join(
+                f'<span class="ro-chip">{theme.esc(r)}</span>' for r in roles) + "</p>")
+        st.caption("Hybrid search: semantic (embeddings) + keyword (BM25), merged with Reciprocal Rank Fusion. "
+                   "Badges show which method found each entry.")
+        a, b = st.columns(2, gap="large")
+        with a:
+            html(theme.section(f"Used by the Context agent ({len(s.get('retrieved') or [])})"))
+            html("".join(theme.source_card(d) for d in s.get("retrieved") or []) or theme.chips(["None"]))
+        with b:
+            html(theme.section(f"Example bullets given to the Writer ({len(s.get('exemplars') or [])})"))
+            st.caption("Style references only; the Writer is told never to copy their facts or numbers.")
+            html("".join(theme.source_card(d) for d in s.get("exemplars") or []) or theme.chips(["None"]))
 
 with tab_trace:
     html(theme.timeline(s.get("history", [])))
