@@ -66,7 +66,8 @@ def test_multi_search_fuses_queries(retriever):
     hits = retriever.multi_search(["kafka streaming", "airflow spark etl", "dbt snowflake"], k=5,
                                   kind="example_bullet", roles=["data_eng"])
     ids = {h["id"] for h in hits}
-    assert len({"ex-data_eng-01", "ex-data_eng-02", "ex-data_eng-03"} & ids) >= 2
+    # The best bullet for each skill query must survive fusion.
+    assert {"ex-data_eng-01", "ex-data_eng-02", "ex-data_eng-03"} <= ids
     assert all(h["queries"] and "data_eng" in h["roles"] for h in hits)
 
 

@@ -155,8 +155,12 @@ class HybridRetriever:
         return [{**{f: self.by_id[d].get(f) for f in ("id", "kind", "title", "text", "roles", "seniority", "skills")},
                  "score": round(scores[d], 4), "matched_by": found_by.get(d, [])} for d in order[:k]]
 
-    def multi_search(self, queries: Sequence[str], k: int = 5, **filters: Any) -> List[Dict[str, Any]]:
-        """Run several focused queries (e.g. one per required skill) and fuse their rankings with RRF."""
+    def multi_search(self, queries: Sequence[str], k: int = 5, per_query: int = 3, **filters: Any) -> List[Dict[str, Any]]:
+        """Run several focused queries (e.g. one per required skill) and fuse their rankings with RRF.
+
+        Only each query's top ``per_query`` results count. Deeper lists are mostly weak matches, and
+        summing them let entries that were mediocre for every skill outrank the best match for one.
+        """
         queries = [q for q in queries if q.strip()]
         embed_many = getattr(self.store.embedder, "embed_many", None)
         if embed_many and queries:
@@ -166,7 +170,7 @@ class HybridRetriever:
                 log.warning("Could not pre-embed queries (%s)", exc)
         fused: Dict[str, Dict[str, Any]] = {}
         for q in queries:
-            for rank, hit in enumerate(self.search(q, k=CANDIDATES // 2, **filters), 1):
+            for rank, hit in enumerate(self.search(q, k=per_query, **filters), 1):
                 entry = fused.setdefault(hit["id"], {**hit, "score": 0.0, "matched_by": set(), "queries": []})
                 entry["score"] += 1.0 / (RRF_K + rank)
                 entry["matched_by"].update(hit["matched_by"])
