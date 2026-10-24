@@ -22,7 +22,8 @@ _STOPWORDS = set(
     based new well looking join ideal candidate responsibilities requirements qualifications preferred required
     bonus nice must-have degree equivalent knowledge understanding excellent good great help build building make
     company products product customers customer world best day every high level engineer engineers engineering
-    senior junior lead staff principal applications application systems reliable agentic need""".split()
+    senior junior lead staff principal applications application systems reliable agentic need software
+    professional hands-on proven solid deep""".split()
 )
 
 # Multi-word / punctuated technical terms that naive tokenisation would split.
@@ -89,12 +90,34 @@ def split_requirements(job_description: str) -> Tuple[List[str], List[str]]:
     return must, nice
 
 
+def _tokens(text: str) -> set:
+    """Meaningful lowercase terms: drops stopwords and bare numbers like '4+' or '2021'."""
+    return {
+        t for t in re.findall(r"[a-z0-9][a-z0-9+#./-]*[a-z0-9+#]|[a-z0-9]", text.lower())
+        if t not in _STOPWORDS and not re.fullmatch(r"\d+\+?", t)
+    }
+
+
+def keyword_present(keyword: str, text: str) -> bool:
+    """Exact phrase match, or (for longer phrases) at least two thirds of its meaningful words present.
+
+    LLMs sometimes return whole requirement sentences ("4+ years of Python experience") as keywords;
+    a literal substring test would score those as always missing.
+    """
+    phrase = re.escape(normalise(keyword))
+    if re.search(rf"(?<![a-z0-9]){phrase}(?![a-z0-9])", normalise(text)):
+        return True
+    words = _tokens(keyword)
+    if not words:
+        return False
+    return len(words & _tokens(text)) / len(words) >= 2 / 3
+
+
 def keyword_coverage(keywords: Iterable[str], text: str) -> Tuple[float, List[str]]:
     keywords = [k for k in keywords if k]
     if not keywords:
         return 1.0, []
-    low = normalise(text)
-    missing = [k for k in keywords if k.lower() not in low]
+    missing = [k for k in keywords if not keyword_present(k, text)]
     return 1 - len(missing) / len(keywords), missing
 
 

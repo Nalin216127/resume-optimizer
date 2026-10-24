@@ -16,8 +16,9 @@ class ContextBrief(BaseModel):
 
     target_role: str = Field(description="Job title being targeted")
     seniority: str = Field(description="e.g. junior, mid, senior, staff, lead")
-    must_have_keywords: List[str] = Field(description="Hard requirements / skills from the job description")
-    nice_to_have_keywords: List[str] = Field(description="Preferred skills from the job description")
+    must_have_keywords: List[str] = Field(
+        description="Hard requirements as short ATS keywords of 1-4 words in the job's own wording, e.g. 'LangGraph', 'Kubernetes', 'CI/CD'")
+    nice_to_have_keywords: List[str] = Field(description="Preferred skills as short keywords of 1-4 words")
     candidate_strengths: List[str] = Field(description="Evidence in the resume that matches the job")
     gaps: List[str] = Field(description="Requirements with no supporting evidence in the resume")
     writing_guidance: List[str] = Field(description="Concrete rewrite guidance drawn from retrieved best practices")

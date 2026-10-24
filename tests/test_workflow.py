@@ -138,3 +138,23 @@ def test_failed_session_retries_from_last_completed_step(settings):
     assert llm.calls == ["context", "writer", "reviewer", "reviewer"]  # context/writer not re-run
     with pytest.raises(ValueError):
         svc.retry(view.session_id)
+
+
+def test_keyword_coverage_tolerates_sentence_keywords():
+    from resume_optimizer.textutils import keyword_coverage
+
+    text = "Built production APIs with FastAPI in Python for 5 years; Docker and CI/CD with GitHub Actions."
+    cov, missing = keyword_coverage(
+        ["FastAPI", "Production APIs with FastAPI", "4+ years of software engineering experience in Python",
+         "Docker and Kubernetes deployment experience", "LangGraph"], text)
+    assert missing == ["Docker and Kubernetes deployment experience", "LangGraph"]
+    assert cov == 0.6
+
+
+def test_keyword_match_is_whole_word():
+    from resume_optimizer.textutils import keyword_present
+
+    assert not keyword_present("AI", "Maintained services")
+    assert keyword_present("AI", "Built AI tooling")
+    assert keyword_present("CI/CD", "Set up CI/CD with GitHub Actions")
+    assert keyword_present("C++", "Wrote C++ services")
