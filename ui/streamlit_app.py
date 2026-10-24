@@ -137,7 +137,7 @@ def embedded_provider() -> str:
     return _secret("LLM_PROVIDER") or "auto"
 
 
-@st.cache_resource
+@st.cache_resource(show_spinner="Starting the agents…")
 def get_backend(provider: str, key_fingerprint: str):
     # Arguments are the cache key: a new provider or a rotated key builds a fresh backend.
     return ApiBackend(API_URL, API_KEY) if API_URL else EmbeddedBackend(provider)
@@ -213,7 +213,9 @@ with st.sidebar:
                 ss.provider_status = cached_provider_status(embedded_provider(), key_fingerprint())
         for row in ss.get("provider_status", []):
             mark = "✅" if row["ok"] else "❌"
-            st.markdown(f"{mark} **{row['provider']}** · {row['seconds']}s" + (f"  \n_{row['detail']}_" if row["detail"] else ""))
+            st.markdown(f"{mark} **{row['provider']}** · {row['seconds']}s")
+            if row["detail"]:
+                st.caption(row["detail"].replace(":", "\\:"))  # stop ":free" rendering as an emoji shortcode
     st.divider()
     if st.button("↺ Start over", use_container_width=True):
         ss.session = None

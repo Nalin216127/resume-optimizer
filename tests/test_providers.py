@@ -161,3 +161,12 @@ def test_check_providers_reports_each_link():
     rows = check_providers(ChainLLM([Failing(), MockLLM()]))
     assert [(r["provider"], r["ok"]) for r in rows] == [("Broken", False), ("offline demo agents", True)]
     assert "quota exhausted" in rows[0]["detail"]
+
+
+
+def test_compat_error_includes_provider_reason():
+    body = {"error": {"message": "No endpoints found matching your data policy", "code": 404}}
+    err = openai.NotFoundError("404", response=httpx.Response(404, request=_REQ), body=body)
+    g = compat(err, models=("m1",))
+    with pytest.raises(LLMError, match="data policy"):
+        call(g)

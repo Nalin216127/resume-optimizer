@@ -36,7 +36,7 @@ All agent outputs are Pydantic models produced through structured outputs, so th
 | Provider | Key | Default models | Free tier |
 |---|---|---|---|
 | Gemini | `GEMINI_API_KEY` | `gemini-flash-lite-latest`, then `gemini-flash-latest` | Daily quota per model |
-| OpenRouter | `OPENROUTER_API_KEY` | `google/gemma-4-31b-it:free`, then `nvidia/nemotron-3-super-120b-a12b:free` | 50 requests/day, 20/minute on `:free` models |
+| OpenRouter | `OPENROUTER_API_KEY` | `google/gemma-4-31b-it:free`, `google/gemma-4-26b-a4b-it:free`, then `nvidia/nemotron-3-super-120b-a12b:free` | 50 requests/day, 20/minute on `:free` models |
 | Any OpenAI-compatible API | `OPENAI_COMPAT_BASE_URL`, `_API_KEY`, `_MODELS` | Your choice (Groq, Together, a vLLM server, ...) | Depends on the provider |
 | Claude | `ANTHROPIC_API_KEY` | `claude-opus-5-5` | Paid |
 | Offline | none | Heuristic mock agents | Used when no key is set |

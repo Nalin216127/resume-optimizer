@@ -4,7 +4,7 @@ metadata:
   name: resume-optimizer-config
 data:
   LLM_PROVIDER: auto   # every provider with a key: gemini -> openrouter -> openai_compat -> anthropic
-  OPENROUTER_MODELS: "google/gemma-4-31b-it:free,nvidia/nemotron-3-super-120b-a12b:free"
+  OPENROUTER_MODELS: "google/gemma-4-31b-it:free,google/gemma-4-26b-a4b-it:free,nvidia/nemotron-3-super-120b-a12b:free"
   EMBEDDING_BACKEND: auto
   ANTHROPIC_MODEL: claude-opus-5-5
   ANTHROPIC_REFUSAL_FALLBACK: "true"

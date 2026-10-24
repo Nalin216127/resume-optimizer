@@ -307,13 +307,14 @@ class OpenAICompatLLM:
                 kwargs.pop("response_format")  # model without JSON mode: rely on the prompt + validation
                 response = self.client.chat.completions.create(**kwargs)
         except oa.RateLimitError as exc:
-            raise _QuotaExhausted(model, self._reset_after(exc), "rate limited") from exc
+            raise _QuotaExhausted(model, self._reset_after(exc), f"rate limited: {self._reason(exc)}") from exc
         except oa.NotFoundError as exc:
-            raise LLMError(f"model {model} is not available") from exc
+            # On OpenRouter this often means the account's privacy settings exclude this free model's endpoints.
+            raise LLMError(f"model not available: {self._reason(exc)}") from exc
         except oa.APIStatusError as exc:
             if exc.status_code >= 500:
                 raise _QuotaExhausted(model, GeminiLLM.OVERLOAD_COOLDOWN, "overloaded") from exc
-            raise LLMError(f"request rejected ({exc.status_code})") from exc
+            raise LLMError(f"request rejected ({exc.status_code}): {self._reason(exc)}") from exc
         except (oa.APITimeoutError, oa.APIConnectionError) as exc:
             raise _QuotaExhausted(model, 60, "unreachable") from exc
         log.info("%s %s: %s %.1fs", self.label, task, model, time.monotonic() - started)
@@ -323,6 +324,17 @@ class OpenAICompatLLM:
         if choice.finish_reason == "length":
             raise LLMError("response was cut off at the token limit")
         return choice.message.content or ""
+
+    @staticmethod
+    def _reason(exc: Any) -> str:
+        """The provider's own error message (OpenRouter puts it in error.message, sometimes metadata.raw)."""
+        body = getattr(exc, "body", None)
+        if isinstance(body, dict):
+            err = body.get("error", body)
+            if isinstance(err, dict):
+                raw = (err.get("metadata") or {}).get("raw")
+                return str(raw or err.get("message") or err)[:160]
+        return str(getattr(exc, "message", exc))[:160]
 
     @staticmethod
     def _reset_after(exc: Any) -> float:

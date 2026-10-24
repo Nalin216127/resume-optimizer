@@ -29,7 +29,8 @@ class Settings:
     openrouter_api_key: str = field(default_factory=lambda: os.getenv("OPENROUTER_API_KEY", ""))
     openrouter_models: List[str] = field(default_factory=lambda: [
         m.strip() for m in os.getenv(
-            "OPENROUTER_MODELS", "google/gemma-4-31b-it:free,nvidia/nemotron-3-super-120b-a12b:free"
+            "OPENROUTER_MODELS",
+            "google/gemma-4-31b-it:free,google/gemma-4-26b-a4b-it:free,nvidia/nemotron-3-super-120b-a12b:free"
         ).split(",") if m.strip()])
     # Any other OpenAI-compatible chat API (Groq, Together, a vLLM server, ...).
     openai_compat_base_url: str = field(default_factory=lambda: os.getenv("OPENAI_COMPAT_BASE_URL", ""))
