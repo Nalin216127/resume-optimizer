@@ -153,7 +153,9 @@ status = s["status"] if s else None
 
 hero_col, toggle_col = st.columns([5, 1], vertical_alignment="top")
 with toggle_col:
-    dark = st.toggle("🌙 Dark" if ss.dark else "☀️ Light", key="dark")
+    # The label must not change with the value: newer Streamlit treats a relabelled widget as a new one
+    # and resets it, which flipped the theme back to light on the next click anywhere on the page.
+    dark = st.toggle("🌙 Dark mode", key="dark")
 st.query_params["theme"] = "dark" if dark else "light"
 st.markdown(theme.page_css("dark" if dark else "light"), unsafe_allow_html=True)
 with hero_col:
