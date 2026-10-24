@@ -363,6 +363,8 @@ class MockLLM:
     label = "offline demo agents"
 
     def structured(self, *, task, system, prompt, schema, payload, effort):
+        if task == "health":
+            return schema.model_validate({"ok": True})
         handler = {"context": self._context, "writer": self._writer, "reviewer": self._reviewer}[task]
         return schema.model_validate(handler(payload).model_dump())
 
@@ -493,3 +495,21 @@ def _build_one(name: str, settings: Settings) -> LLM:
 def build_llm(settings: Settings) -> LLM:
     providers = [_build_one(n, settings) for n in provider_names(settings)]
     return providers[0] if len(providers) == 1 else ChainLLM(providers)
+
+
+def check_providers(llm: LLM) -> List[Dict[str, Any]]:
+    """Send one tiny structured request to each provider in the chain; report which ones answer."""
+    from .schemas import HealthCheck
+
+    results = []
+    for provider in getattr(llm, "providers", [llm]):
+        started = time.monotonic()
+        try:
+            provider.structured(task="health", system="You are a health check.", prompt='Return {"ok": true}.',
+                                schema=HealthCheck, payload={}, effort="low")
+            ok, detail = True, ""
+        except LLMError as exc:
+            ok, detail = False, str(exc)[:200]
+        results.append({"provider": getattr(provider, "label", type(provider).__name__), "ok": ok,
+                        "seconds": round(time.monotonic() - started, 1), "detail": detail})
+    return results

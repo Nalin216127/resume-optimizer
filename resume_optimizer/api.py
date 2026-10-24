@@ -61,6 +61,12 @@ def readyz(svc: ResumeService = Depends(get_service)):
             "knowledge_docs": svc.store.count()}
 
 
+@app.get("/api/v1/providers", dependencies=[Depends(require_auth)], tags=["ops"])
+def provider_status(svc: ResumeService = Depends(get_service)):
+    """Send one tiny request to each configured LLM provider and report which ones answer."""
+    return svc.provider_status()
+
+
 @app.post("/api/v1/sessions", response_model=SessionView, dependencies=[Depends(require_auth)], tags=["sessions"])
 def start_session(req: StartSessionRequest, svc: ResumeService = Depends(get_service)):
     """Run Supervisor → Context → Writer ⇄ Reviewer until the draft needs human approval."""

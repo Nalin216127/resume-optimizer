@@ -64,6 +64,17 @@ class ReviewReport(BaseModel):
     possible_fabrications: List[str] = Field(description="Claims in the draft not supported by the original resume")
 
 
+class HealthCheck(BaseModel):
+    ok: bool
+
+
+class ProviderStatus(BaseModel):
+    provider: str
+    ok: bool
+    seconds: float
+    detail: str = ""
+
+
 class EvidenceItem(BaseModel):
     """One draft claim and the closest line of the original resume (embedding similarity)."""
 

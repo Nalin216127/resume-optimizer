@@ -9,7 +9,7 @@ from langgraph.types import Command
 
 from .config import Settings, get_settings
 from .graph import build_checkpointer, build_graph
-from .llm import LLM, LLMError, build_llm
+from .llm import LLM, LLMError, build_llm, check_providers
 from .schemas import FeedbackRequest, KnowledgeDoc, SessionView, StartSessionRequest
 from .vectorstore import KnowledgeStore, build_store
 
@@ -113,6 +113,9 @@ class ResumeService:
             history=values.get("history", []),
             error=error,
         )
+
+    def provider_status(self) -> List[Dict[str, Any]]:
+        return check_providers(self.llm)
 
     def add_knowledge(self, docs: List[KnowledgeDoc]) -> int:
         return self.store.add([d.model_dump() for d in docs])

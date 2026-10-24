@@ -36,6 +36,11 @@ def test_session_lifecycle(client):
     assert client.post(f"/api/v1/sessions/{sid}/retry").status_code == 409
 
 
+def test_provider_status(client):
+    rows = client.get("/api/v1/providers").json()
+    assert rows == [{"provider": "offline demo agents", "ok": True, "seconds": rows[0]["seconds"], "detail": ""}]
+
+
 def test_errors(client):
     assert client.get("/api/v1/sessions/missing").status_code == 404
     assert client.post("/api/v1/sessions", json={"resume_text": "short", "job_description": "short"}).status_code == 422

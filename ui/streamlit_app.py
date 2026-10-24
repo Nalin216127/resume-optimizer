@@ -61,6 +61,9 @@ class ApiBackend:
     def retry(self, sid, on_event=None):
         return self._call("POST", f"/api/v1/sessions/{sid}/retry")
 
+    def provider_status(self):
+        return self._call("GET", "/api/v1/providers")
+
     def extract(self, name, data):
         return self._call("POST", "/api/v1/extract-text", files={"file": (name, data)})["text"]
 
@@ -111,6 +114,9 @@ class EmbeddedBackend:
         except ValueError as exc:
             raise RuntimeError(str(exc)) from exc
 
+    def provider_status(self):
+        return self.svc.provider_status()
+
     def retry(self, sid, on_event=None):
         try:
             return self.svc.retry(sid, on_event).model_dump()
@@ -135,6 +141,12 @@ def embedded_provider() -> str:
 def get_backend(provider: str, key_fingerprint: str):
     # Arguments are the cache key: a new provider or a rotated key builds a fresh backend.
     return ApiBackend(API_URL, API_KEY) if API_URL else EmbeddedBackend(provider)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def cached_provider_status(provider: str, key_fingerprint: str):
+    # Cached for 10 minutes so repeated clicks by visitors can't burn the free quotas.
+    return get_backend(provider, key_fingerprint).provider_status()
 
 
 def key_fingerprint() -> str:
@@ -194,6 +206,14 @@ with st.sidebar:
     max_auto = st.slider("Max automatic revisions", 0, 5, 2,
                          help="Writer ⇄ Reviewer rounds before the draft comes to you")
     target_role = st.text_input("Target role (optional)", placeholder="e.g. Senior AI Engineer")
+    with st.expander("Provider status"):
+        st.caption("Sends one tiny request to each model provider. Results are cached for 10 minutes.")
+        if st.button("Check providers", use_container_width=True):
+            with st.spinner("Checking…"):
+                ss.provider_status = cached_provider_status(embedded_provider(), key_fingerprint())
+        for row in ss.get("provider_status", []):
+            mark = "✅" if row["ok"] else "❌"
+            st.markdown(f"{mark} **{row['provider']}** · {row['seconds']}s" + (f"  \n_{row['detail']}_" if row["detail"] else ""))
     st.divider()
     if st.button("↺ Start over", use_container_width=True):
         ss.session = None

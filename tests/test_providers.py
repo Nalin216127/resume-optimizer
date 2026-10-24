@@ -152,3 +152,12 @@ def test_evidence_check_fails_closed_to_lexical():
     draft = {"summary": "", "sections": [{"title": "x", "bullets": ["Wrote unit tests and set up GitHub Actions CI for 12 services"]}]}
     items = evidence_check(SAMPLE_RESUME, draft, Broken())
     assert items and items[0].supported  # checked with the hashing fallback, not skipped
+
+
+
+def test_check_providers_reports_each_link():
+    from resume_optimizer.llm import check_providers
+
+    rows = check_providers(ChainLLM([Failing(), MockLLM()]))
+    assert [(r["provider"], r["ok"]) for r in rows] == [("Broken", False), ("offline demo agents", True)]
+    assert "quota exhausted" in rows[0]["detail"]
