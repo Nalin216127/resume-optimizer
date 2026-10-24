@@ -65,21 +65,25 @@ class ApiBackend:
 class EmbeddedBackend:
     LABELS = {"anthropic": "Claude", "gemini": "Gemini", "mock": "offline demo agents"}
 
-    def __init__(self):
-        # Copy hosted secrets (e.g. Streamlit Cloud) into the environment the service reads.
-        for name in ("ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GEMINI_MODEL", "ANTHROPIC_MODEL", "LLM_PROVIDER"):
-            if _secret(name):
-                os.environ[name] = _secret(name)
-        if "LLM_PROVIDER" not in os.environ:
-            os.environ["LLM_PROVIDER"] = (
-                "gemini" if os.getenv("GEMINI_API_KEY") else "anthropic" if os.getenv("ANTHROPIC_API_KEY") else "mock"
-            )
-        os.environ.setdefault("VECTOR_BACKEND", "memory")
-        os.environ.setdefault("CHECKPOINT_BACKEND", "memory")
+    def __init__(self, provider: str):
+        from dataclasses import replace
+
+        from resume_optimizer.config import Settings
         from resume_optimizer.service import ResumeService
 
-        self.svc = ResumeService()
-        self.label = f"in-process ({self.LABELS.get(os.environ['LLM_PROVIDER'], os.environ['LLM_PROVIDER'])})"
+        if provider == "anthropic":
+            os.environ["ANTHROPIC_API_KEY"] = _secret("ANTHROPIC_API_KEY")  # the Anthropic SDK reads it from the env
+        settings = replace(
+            Settings(),
+            llm_provider=provider,
+            gemini_api_key=_secret("GEMINI_API_KEY"),
+            gemini_model=_secret("GEMINI_MODEL", Settings().gemini_model),
+            anthropic_model=_secret("ANTHROPIC_MODEL", Settings().anthropic_model),
+            vector_backend="memory",
+            checkpoint_backend="memory",
+        )
+        self.svc = ResumeService(settings)
+        self.label = f"in-process ({self.LABELS.get(provider, provider)})"
 
     def start(self, payload):
         from resume_optimizer.schemas import StartSessionRequest
@@ -109,14 +113,30 @@ class EmbeddedBackend:
             raise RuntimeError(str(exc)) from exc
 
 
+def embedded_provider() -> str:
+    """Decided from the current secrets on every run, so adding or changing a key takes effect without a redeploy."""
+    explicit = _secret("LLM_PROVIDER")
+    if explicit:
+        return explicit
+    return "gemini" if _secret("GEMINI_API_KEY") else "anthropic" if _secret("ANTHROPIC_API_KEY") else "mock"
+
+
 @st.cache_resource
-def get_backend():
-    return ApiBackend(API_URL, API_KEY) if API_URL else EmbeddedBackend()
+def get_backend(provider: str, key_fingerprint: str):
+    # Arguments are the cache key: a new provider or a rotated key builds a fresh backend.
+    return ApiBackend(API_URL, API_KEY) if API_URL else EmbeddedBackend(provider)
+
+
+def key_fingerprint() -> str:
+    import hashlib
+
+    material = "|".join(_secret(n) for n in ("GEMINI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_MODEL", "ANTHROPIC_MODEL"))
+    return hashlib.sha256(material.encode()).hexdigest()[:16]
 
 
 # ------------------------------------------------------------------------ UI
 st.set_page_config(page_title="Resume Optimizer", page_icon="📄", layout="wide")
-backend = get_backend()
+backend = get_backend(embedded_provider(), key_fingerprint())
 ss = st.session_state
 ss.setdefault("session", None)
 ss.setdefault("resume_text", SAMPLE_RESUME)
