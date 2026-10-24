@@ -98,12 +98,18 @@ class EmbeddedBackend:
             openai_compat_models=models("OPENAI_COMPAT_MODELS", base.openai_compat_models),
             anthropic_api_key=_secret("ANTHROPIC_API_KEY"),
             anthropic_model=_secret("ANTHROPIC_MODEL", base.anthropic_model),
-            vector_backend="memory",
+            # Managed Milvus (e.g. Zilliz Cloud) when its endpoint is in the secrets, else in-memory.
+            vector_backend="milvus" if _secret("MILVUS_URI") else "memory",
+            milvus_uri=_secret("MILVUS_URI", base.milvus_uri),
+            milvus_token=_secret("MILVUS_TOKEN"),
+            milvus_collection=_secret("MILVUS_COLLECTION", base.milvus_collection),
+            vector_fallback_to_memory=True,
             checkpoint_backend="memory",
         )
         self.svc = ResumeService(settings)
         self.label = f"{self.svc.llm.label}"
         self.embeddings = self.svc.store.embedder.label
+        self.vectors = getattr(self.svc.store, "label", type(self.svc.store).__name__)
 
     def start(self, payload, on_event=None):
         from resume_optimizer.schemas import StartSessionRequest
@@ -184,6 +190,7 @@ def key_fingerprint() -> str:
     import hashlib
 
     names = ("GEMINI_API_KEY", "GEMINI_MODEL", "GEMINI_FALLBACK_MODELS", "OPENROUTER_API_KEY", "OPENROUTER_MODELS",
+             "MILVUS_URI", "MILVUS_TOKEN", "MILVUS_COLLECTION",
              "OPENAI_COMPAT_BASE_URL", "OPENAI_COMPAT_API_KEY", "OPENAI_COMPAT_MODELS", "ANTHROPIC_API_KEY",
              "ANTHROPIC_MODEL")
     material = "|".join(_secret(n) for n in names)
@@ -252,6 +259,9 @@ with st.sidebar:
     st.markdown(f'<div class="ro-backend">Models: <b>{theme.esc(backend.label)}</b></div>', unsafe_allow_html=True)
     if getattr(backend, "embeddings", None):
         st.markdown(f'<div class="ro-backend">Embeddings: <b>{theme.esc(backend.embeddings)}</b></div>',
+                    unsafe_allow_html=True)
+    if getattr(backend, "vectors", None):
+        st.markdown(f'<div class="ro-backend">Vector store: <b>{theme.esc(backend.vectors)}</b></div>',
                     unsafe_allow_html=True)
     st.divider()
     threshold = st.slider("Reviewer pass threshold", 5.0, 10.0, 8.0, 0.5,

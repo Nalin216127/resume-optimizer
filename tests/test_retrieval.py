@@ -144,3 +144,16 @@ def test_precomputed_vectors_cover_the_knowledge_base():
     keys = {cache_key("RETRIEVAL_DOCUMENT", _embed_text(_normalise_doc(d))) for d in SEED_KNOWLEDGE}
     assert keys <= set(vectors), "re-run scripts/precompute_embeddings.py after editing knowledge.jsonl"
     assert all(len(v) == 768 for v in list(vectors.values())[:5])
+
+
+
+def test_unreachable_milvus_falls_back_to_memory_when_allowed(settings):
+    from dataclasses import replace
+
+    from resume_optimizer.vectorstore import build_store
+
+    bad = replace(settings, vector_backend="milvus", milvus_uri="http://127.0.0.1:1", vector_fallback_to_memory=True)
+    store = build_store(bad)
+    assert store.label.startswith("In-memory (Milvus unavailable") and store.count() >= 150
+    with pytest.raises(Exception):
+        build_store(replace(bad, vector_fallback_to_memory=False))

@@ -204,6 +204,8 @@ def _embed_text(d: Dict[str, Any]) -> str:
 
 
 class InMemoryStore:
+    label = "In-memory"
+
     def __init__(self, embedder: Embedder):
         self.embedder = embedder
         self.rows: List[Dict[str, Any]] = []
@@ -244,7 +246,8 @@ class MilvusStore:
         # One collection per embedder and knowledge-base version (e.g. resume_knowledge_gemini768_kb2):
         # vectors from different embedders, dimensions or corpora must never share a collection.
         self.collection = f"{settings.milvus_collection}_{embedder.tag}_{KNOWLEDGE_VERSION}"
-        self.client = MilvusClient(uri=settings.milvus_uri, token=settings.milvus_token or "")
+        self.client = MilvusClient(uri=settings.milvus_uri, token=settings.milvus_token or "", timeout=10)
+        self.label = "Zilliz Cloud (Milvus)" if "zilliz" in settings.milvus_uri else "Milvus"
         if not self.client.has_collection(self.collection):
             # Quick-setup schema: auto int64 pk + float vector; metadata lives in dynamic fields.
             self.client.create_collection(
@@ -288,8 +291,11 @@ class MilvusStore:
 
     def count(self):
         # count(*) with Strong consistency sees unflushed inserts; collection stats can lag behind.
-        rows = self.client.query(self.collection, filter="", output_fields=["count(*)"], consistency_level="Strong")
-        return int(rows[0]["count(*)"]) if rows else 0
+        try:
+            rows = self.client.query(self.collection, filter="", output_fields=["count(*)"], consistency_level="Strong")
+            return int(rows[0]["count(*)"]) if rows else 0
+        except Exception:  # noqa: BLE001 - some managed tiers reject count(*); fall back to listing
+            return len(self.all_docs())
 
     def healthy(self):
         try:
@@ -317,7 +323,17 @@ def build_store(settings: Settings) -> KnowledgeStore:
     embedder = build_embedder(settings)
     store: KnowledgeStore
     if settings.vector_backend == "milvus":
-        store = MilvusStore(settings, embedder)
+        try:
+            store = MilvusStore(settings, embedder)
+            if settings.seed_on_startup:
+                seed(store)
+            return store
+        except Exception as exc:  # noqa: BLE001 - connection, auth or quota problems
+            if not settings.vector_fallback_to_memory:
+                raise
+            log.warning("Milvus unavailable (%s); falling back to the in-memory store", exc)
+            store = InMemoryStore(embedder)
+            store.label = f"In-memory (Milvus unavailable: {type(exc).__name__})"
     elif settings.vector_backend == "memory":
         store = InMemoryStore(embedder)
     else:

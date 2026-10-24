@@ -54,6 +54,9 @@ class Settings:
     milvus_uri: str = field(default_factory=lambda: os.getenv("MILVUS_URI", "http://localhost:19530"))
     milvus_token: str = field(default_factory=lambda: os.getenv("MILVUS_TOKEN", ""))
     milvus_collection: str = field(default_factory=lambda: os.getenv("MILVUS_COLLECTION", "resume_knowledge"))
+    # If Milvus can't be reached at start-up, use the in-memory store instead of failing. Off by default
+    # (Docker/Kubernetes should fail loudly); the single-container Streamlit deployment turns it on.
+    vector_fallback_to_memory: bool = field(default_factory=lambda: _bool("VECTOR_FALLBACK_TO_MEMORY", False))
     # "auto" uses Gemini's hosted embedding API when GEMINI_API_KEY is set, else the local hashing embedder.
     embedding_backend: str = field(default_factory=lambda: os.getenv("EMBEDDING_BACKEND", "auto"))
     embedding_dim: int = field(default_factory=lambda: int(os.getenv("EMBEDDING_DIM", "384")))

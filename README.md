@@ -3,7 +3,7 @@
 [![Live demo](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://nalin-resume-optimizer.streamlit.app)
 [![CI](https://github.com/Nalin216127/resume-optimizer/actions/workflows/ci.yml/badge.svg)](https://github.com/Nalin216127/resume-optimizer/actions/workflows/ci.yml)
 
-**Live demo:** https://nalin-resume-optimizer.streamlit.app. The demo runs in embedded mode, with an in-memory store instead of Milvus. It uses every LLM key in its secrets as a failover chain (Gemini, then OpenRouter, then any OpenAI-compatible API, then Claude), and the offline demo agents if there are none.
+**Live demo:** https://nalin-resume-optimizer.streamlit.app. The demo runs the agents inside the Streamlit process. When `MILVUS_URI` and `MILVUS_TOKEN` are in its secrets (for example a free Zilliz Cloud cluster), the knowledge base lives in managed Milvus; otherwise it uses an in-memory store. It uses every LLM key in its secrets as a failover chain (Gemini, then OpenRouter, then any OpenAI-compatible API, then Claude), and the offline demo agents if there are none.
 
 A resume tailoring system built on **LangGraph**. A Supervisor coordinates Context, Writer and Reviewer agents, then pauses for a **human-in-the-loop** approval before anything is final. A **FastAPI** backend and a **Streamlit** UI sit on top. **Milvus** holds the retrieval knowledge base. The stack ships with **Docker Compose** and **Kubernetes** manifests.
 
