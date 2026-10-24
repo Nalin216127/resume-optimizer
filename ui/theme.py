@@ -118,6 +118,20 @@ hr {{ border-color: var(--ro-border) !important; }}
   border-color: var(--ro-button) !important; box-shadow: 0 0 0 3px var(--ro-chip);
 }}
 
+/* ---------- theme selector (segmented control) ---------- */
+[data-testid="stButtonGroup"], [data-testid="stButtonGroup"] > div {{
+  display: flex; flex-wrap: nowrap !important; justify-content: flex-end; gap: 0;
+}}
+[data-testid="stButtonGroup"] button {{ padding: .3rem .7rem; min-height: 2.1rem; font-size: .85rem; }}
+[data-testid="stButtonGroup"] button {{
+  background: var(--ro-surface); border: 1px solid var(--ro-border); color: var(--ro-muted); font-weight: 600;
+  white-space: nowrap;
+}}
+[data-testid="stButtonGroup"] button p {{ color: inherit !important; }}
+[data-testid="stBaseButton-segmented_controlActive"] {{
+  background: var(--ro-button) !important; border-color: var(--ro-button) !important; color: #fff !important;
+}}
+
 /* ---------- toggle ---------- */
 [data-testid="stCheckbox"] label > div:first-of-type {{ background: var(--ro-border) !important; }}
 [data-testid="stCheckbox"] label > div:first-of-type > div {{ background: #FFFFFF !important; box-shadow: 0 1px 3px rgba(0,0,0,.35); }}

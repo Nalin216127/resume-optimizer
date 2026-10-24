@@ -144,20 +144,31 @@ ss = st.session_state
 ss.setdefault("session", None)
 ss.setdefault("resume_text", SAMPLE_RESUME)
 ss.setdefault("job_text", SAMPLE_JOB)
-if "dark" not in ss:
+if "theme_mode" not in ss:
     # ?theme=light in the URL survives reloads and shared links.
-    ss.dark = st.query_params.get("theme", "dark") != "light"
+    ss.theme_mode = "light" if st.query_params.get("theme") == "light" else "dark"
+THEME_OPTIONS = {"🌙 Dark": "dark", "☀️ Light": "light"}
+if "theme_choice" in ss and ss.theme_choice is None:
+    # The active option was clicked again and deselected: re-select the current mode.
+    ss.theme_choice = next(k for k, v in THEME_OPTIONS.items() if v == ss.theme_mode)
 
 s = ss.session
 status = s["status"] if s else None
 
-hero_col, toggle_col = st.columns([5, 1], vertical_alignment="top")
+hero_col, toggle_col = st.columns([3, 1.4], vertical_alignment="top")
 with toggle_col:
-    # The label must not change with the value: newer Streamlit treats a relabelled widget as a new one
-    # and resets it, which flipped the theme back to light on the next click anywhere on the page.
-    dark = st.toggle("🌙 Dark mode", key="dark")
-st.query_params["theme"] = "dark" if dark else "light"
-st.markdown(theme.page_css("dark" if dark else "light"), unsafe_allow_html=True)
+    # Two fixed options keep the widget identity stable (a relabelled widget is reset by newer
+    # Streamlit) and always show which mode is active.
+    choice = st.segmented_control(
+        "Theme", list(THEME_OPTIONS), key="theme_choice", label_visibility="collapsed",
+        default=next(k for k, v in THEME_OPTIONS.items() if v == ss.theme_mode),
+    )
+if choice is not None:
+    ss.theme_mode = THEME_OPTIONS[choice]
+else:
+    st.rerun()  # re-highlight the current mode (see the deselect guard above)
+st.query_params["theme"] = ss.theme_mode
+st.markdown(theme.page_css(ss.theme_mode), unsafe_allow_html=True)
 with hero_col:
     st.markdown(theme.hero(status), unsafe_allow_html=True)
 
