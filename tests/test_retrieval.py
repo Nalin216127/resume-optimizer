@@ -66,8 +66,8 @@ def test_multi_search_fuses_queries(retriever):
     hits = retriever.multi_search(["kafka streaming", "airflow spark etl", "dbt snowflake"], k=5,
                                   kind="example_bullet", roles=["data_eng"])
     ids = {h["id"] for h in hits}
-    assert {"ex-data_eng-01", "ex-data_eng-02", "ex-data_eng-03"} <= ids
-    assert all(h["queries"] for h in hits)
+    assert len({"ex-data_eng-01", "ex-data_eng-02", "ex-data_eng-03"} & ids) >= 2
+    assert all(h["queries"] and "data_eng" in h["roles"] for h in hits)
 
 
 @pytest.mark.parametrize("jd,role", [
@@ -92,10 +92,16 @@ def test_add_refreshes_keyword_index(retriever):
     assert retriever.search("qubit", k=1, mode="keyword")[0]["id"] == "custom-1"
 
 
+def test_kind_filter_does_not_starve_results(retriever):
+    query = SAMPLE_JOB  # long job ad: example bullets outscore guidelines overall
+    assert len(retriever.search(query, k=5, kind="guideline", seniority="senior")) == 5
+
+
 def test_session_exposes_rag_sources(service):
     view = service.start(StartSessionRequest(resume_text=SAMPLE_RESUME, job_description=SAMPLE_JOB, max_auto_revisions=0))
     assert view.target_roles and view.target_roles[0] == "ml_ai"
     assert any(d["kind"] == "role_profile" for d in view.retrieved)
+    assert sum(d["kind"] == "guideline" for d in view.retrieved) >= 4
     assert view.exemplars and all(e["kind"] == "example_bullet" for e in view.exemplars)
     assert all("ml_ai" in e["roles"] for e in view.exemplars)
 

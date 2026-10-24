@@ -119,14 +119,16 @@ class HybridRetriever:
         lists: Dict[str, List[str]] = {}
         if mode in ("hybrid", "semantic"):
             try:
-                lists["semantic"] = [h["id"] for h in self.store.search(query, k=CANDIDATES)]
+                # Filter by kind inside the vector search, so other kinds can't crowd out the candidates.
+                lists["semantic"] = [h["id"] for h in self.store.search(query, k=CANDIDATES, kind=kind)]
             except Exception as exc:  # noqa: BLE001 - embedding API down or rate limited: keyword-only
                 log.warning("Semantic search unavailable (%s); using keyword search only", exc)
                 lists["semantic"] = []
         if mode in ("hybrid", "keyword"):
-            lists["keyword"] = [self.docs[i]["id"] for i, _ in self.bm25.search(query, CANDIDATES)]
-        for method in lists:  # apply metadata filters before ranking
-            lists[method] = [i for i in lists[method] if i in self.by_id and _matches(self.by_id[i], kind, roles, seniority)]
+            lists["keyword"] = [self.docs[i]["id"] for i, _ in self.bm25.search(query, len(self.docs))]
+        for method in lists:  # metadata filters, then the candidate cap
+            lists[method] = [i for i in lists[method]
+                             if i in self.by_id and _matches(self.by_id[i], kind, roles, seniority)][:CANDIDATES]
 
         found_by: Dict[str, List[str]] = {}
         for method, ids in lists.items():
