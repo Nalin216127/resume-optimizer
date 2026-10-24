@@ -215,7 +215,9 @@ with st.sidebar:
             mark = "✅" if row["ok"] else "❌"
             st.markdown(f"{mark} **{row['provider']}** · {row['seconds']}s")
             if row["detail"]:
-                st.caption(row["detail"].replace(":", "\\:"))  # stop ":free" rendering as an emoji shortcode
+                # One line per model; escape ':' so ":free" doesn't render as an emoji shortcode.
+                for part in row["detail"].split("; "):
+                    st.caption(part.replace(":", "\\:"))
     st.divider()
     if st.button("↺ Start over", use_container_width=True):
         ss.session = None

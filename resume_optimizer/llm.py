@@ -521,7 +521,7 @@ def check_providers(llm: LLM) -> List[Dict[str, Any]]:
                                 schema=HealthCheck, payload={}, effort="low")
             ok, detail = True, ""
         except LLMError as exc:
-            ok, detail = False, str(exc)[:200]
+            ok, detail = False, str(exc)[:900]
         results.append({"provider": getattr(provider, "label", type(provider).__name__), "ok": ok,
                         "seconds": round(time.monotonic() - started, 1), "detail": detail})
     return results
