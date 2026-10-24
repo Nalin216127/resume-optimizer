@@ -91,11 +91,14 @@ class AnthropicLLM:
 
 # --------------------------------------------------------------------- Gemini
 class _QuotaExhausted(Exception):
-    """A 429 whose retry delay is too long to wait out inside a request (e.g. a daily free-tier cap)."""
+    """This model can't serve now: a long 429 (e.g. a daily free-tier cap) or repeated 5xx overload.
 
-    def __init__(self, model: str, retry_after: float):
+    The caller moves on to the next model and skips this one for ``retry_after`` seconds.
+    """
+
+    def __init__(self, model: str, retry_after: float, reason: str = "quota exhausted"):
         super().__init__(model)
-        self.model, self.retry_after = model, retry_after
+        self.model, self.retry_after, self.reason = model, retry_after, reason
 
 
 def _retry_delay(exc: Any) -> Optional[float]:
@@ -118,8 +121,10 @@ def _human_delay(seconds: float) -> str:
 class GeminiLLM:
     RETRYABLE = {429, 500, 502, 503, 504}
     MAX_INLINE_WAIT = 60  # wait out per-minute limits; anything longer moves to the next model
-    # Agent effort → Gemini thinking budget (tokens). None lets the model decide.
-    THINKING_BUDGET = {"low": 512, "medium": 2048, "high": None}
+    OVERLOAD_COOLDOWN = 120  # after repeated 5xx, skip that model for this long
+    # Agent effort → Gemini thinking budget (tokens). Capped even at "high": unbounded thinking made
+    # single Flash calls take over a minute.
+    THINKING_BUDGET = {"low": 512, "medium": 2048, "high": 6144}
 
     def __init__(self, settings: Settings):
         import httpx
@@ -167,14 +172,19 @@ class GeminiLLM:
     def _generate_with_fallback(self, task, prompt, config):
         now = time.time()
         available = [m for m in self.models if self._exhausted_until.get(m, 0) <= now]
+        reasons: Dict[str, str] = {}
         for model in available:
             try:
                 return self._generate(task, model, prompt, config)
             except _QuotaExhausted as exc:
                 self._exhausted_until[model] = time.time() + exc.retry_after
-                log.warning("gemini %s: quota exhausted on %s for %s; trying next model",
-                            task, model, _human_delay(exc.retry_after))
+                reasons[model] = exc.reason
+                log.warning("gemini %s: %s on %s, skipping it for %s; trying next model",
+                            task, exc.reason, model, _human_delay(exc.retry_after))
         soonest = min(self._exhausted_until.get(m, now) for m in self.models) - time.time()
+        if reasons and all(r == "overloaded" for r in reasons.values()):
+            raise LLMError(f"{task}: Gemini is overloaded right now (HTTP 503 on {', '.join(reasons)}). "
+                           "Press Retry in a minute; finished steps are kept.")
         raise LLMError(
             f"{task}: Gemini quota exhausted for {', '.join(self.models)} (free tier allows few requests per day). "
             f"Resets in about {_human_delay(max(soonest, 60))}; use a paid key or retry later."
@@ -192,10 +202,13 @@ class GeminiLLM:
                 if exc.code == 429 and delay is not None and delay > self.MAX_INLINE_WAIT:
                     raise _QuotaExhausted(model, delay) from exc
                 if exc.code in self.RETRYABLE and attempt < attempts - 1:
-                    time.sleep(delay if delay is not None else 2 ** attempt)
+                    time.sleep(delay if delay is not None else 2 ** (attempt + 1))  # 2s, 4s, 8s
                     continue
                 if exc.code == 429:
                     raise _QuotaExhausted(model, delay or self.MAX_INLINE_WAIT) from exc
+                if exc.code >= 500:
+                    # Still failing after retries: the model is overloaded, so try the next one.
+                    raise _QuotaExhausted(model, self.OVERLOAD_COOLDOWN, "overloaded") from exc
                 if exc.code == 404:
                     raise LLMError(f"{task}: Gemini model {model} is unavailable to this key: set GEMINI_MODEL") from exc
                 if exc.code in (400, 401, 403):

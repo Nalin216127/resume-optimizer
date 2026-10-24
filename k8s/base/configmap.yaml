@@ -6,8 +6,8 @@ data:
   LLM_PROVIDER: anthropic   # anthropic | gemini | mock
   ANTHROPIC_MODEL: claude-opus-5-5
   ANTHROPIC_REFUSAL_FALLBACK: "true"
-  GEMINI_MODEL: gemini-flash-latest
-  GEMINI_FALLBACK_MODELS: gemini-flash-lite-latest
+  GEMINI_MODEL: gemini-flash-lite-latest
+  GEMINI_FALLBACK_MODELS: gemini-flash-latest
   VECTOR_BACKEND: milvus
   MILVUS_URI: http://milvus:19530
   MILVUS_COLLECTION: resume_knowledge

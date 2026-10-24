@@ -130,7 +130,7 @@ def test_unavailable_model(gemini):
         call(gemini(api_error(404)))
 
 
-@pytest.mark.parametrize("effort,budget", [("low", 512), ("medium", 2048), ("high", None)])
+@pytest.mark.parametrize("effort,budget", [("low", 512), ("medium", 2048), ("high", 6144)])
 def test_effort_maps_to_thinking_budget(gemini, effort, budget):
     g = gemini(reply())
     g.structured(task="t", system="s", prompt="p", schema=ReviewScores, payload={}, effort=effort)
@@ -141,3 +141,15 @@ def test_effort_maps_to_thinking_budget(gemini, effort, budget):
 def test_requires_key(settings):
     with pytest.raises(ValueError, match="GEMINI_API_KEY"):
         build_llm(replace(settings, llm_provider="gemini", gemini_api_key=""))
+
+
+def test_persistent_overload_falls_back_to_next_model(gemini):
+    g = gemini(*[api_error(503)] * 4, reply(), fallbacks=["lite"])
+    assert call(g).truthfulness == 10
+    assert g.client.models.models == ["main"] * 4 + ["lite"]
+
+
+def test_overload_everywhere_says_retry(gemini):
+    g = gemini(*[api_error(503)] * 8, fallbacks=["lite"])
+    with pytest.raises(LLMError, match="overloaded right now"):
+        call(g)

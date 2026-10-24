@@ -158,3 +158,12 @@ def test_keyword_match_is_whole_word():
     assert keyword_present("AI", "Built AI tooling")
     assert keyword_present("CI/CD", "Set up CI/CD with GitHub Actions")
     assert keyword_present("C++", "Wrote C++ services")
+
+
+def test_progress_callback_reports_each_agent(service):
+    events = []
+    view = service.start(StartSessionRequest(resume_text=SAMPLE_RESUME, job_description=SAMPLE_JOB,
+                                             max_auto_revisions=0), on_event=lambda a, m: events.append(a))
+    assert view.status == "awaiting_human"
+    assert [a for a in events if a != "supervisor"] == ["context", "writer", "reviewer"]
+    assert len(events) == len(view.history)

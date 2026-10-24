@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from langgraph.types import Command
 
@@ -23,6 +23,10 @@ class SessionNotFound(KeyError):
     pass
 
 
+# Called with (agent, message) as each agent finishes, so a UI can show live progress.
+ProgressCallback = Callable[[str, str], None]
+
+
 class ResumeService:
     def __init__(self, settings: Optional[Settings] = None, llm: Optional[LLM] = None,
                  store: Optional[KnowledgeStore] = None):
@@ -34,15 +38,20 @@ class ResumeService:
     def _config(self, session_id: str) -> Dict[str, Any]:
         return {"configurable": {"thread_id": session_id}, "recursion_limit": RECURSION_LIMIT}
 
-    def _run(self, session_id: str, graph_input: Any) -> SessionView:
+    def _run(self, session_id: str, graph_input: Any, on_event: Optional[ProgressCallback] = None) -> SessionView:
         try:
-            self.graph.invoke(graph_input, self._config(session_id))
+            for chunk in self.graph.stream(graph_input, self._config(session_id), stream_mode="updates"):
+                if on_event is None:
+                    continue
+                for update in chunk.values():
+                    for event in (update or {}).get("history", []) if isinstance(update, dict) else []:
+                        on_event(event["agent"], event["message"])
         except LLMError as exc:
             log.warning("session %s failed: %s", session_id, exc)
             return self.get(session_id, error=str(exc))
         return self.get(session_id)
 
-    def start(self, req: StartSessionRequest) -> SessionView:
+    def start(self, req: StartSessionRequest, on_event: Optional[ProgressCallback] = None) -> SessionView:
         session_id = uuid.uuid4().hex
         initial = {
             "resume_text": req.resume_text,
@@ -58,22 +67,23 @@ class ResumeService:
             "revision_requested": False,
             "history": [],
         }
-        return self._run(session_id, initial)
+        return self._run(session_id, initial, on_event)
 
-    def feedback(self, session_id: str, req: FeedbackRequest) -> SessionView:
+    def feedback(self, session_id: str, req: FeedbackRequest,
+                 on_event: Optional[ProgressCallback] = None) -> SessionView:
         view = self.get(session_id)
         if view.status != "awaiting_human":
             raise ValueError(f"Session is {view.status}, not awaiting human feedback")
         if req.action == "revise" and not req.feedback.strip():
             raise ValueError("Feedback text is required to request a revision")
-        return self._run(session_id, Command(resume=req.model_dump()))
+        return self._run(session_id, Command(resume=req.model_dump()), on_event)
 
-    def retry(self, session_id: str) -> SessionView:
+    def retry(self, session_id: str, on_event: Optional[ProgressCallback] = None) -> SessionView:
         """Resume a failed run from the last completed agent; finished agents are not re-run."""
         view = self.get(session_id)
         if view.status != "failed":
             raise ValueError(f"Session is {view.status}; only failed sessions can be retried")
-        return self._run(session_id, None)
+        return self._run(session_id, None, on_event)
 
     def get(self, session_id: str, error: Optional[str] = None) -> SessionView:
         snapshot = self.graph.get_state(self._config(session_id))

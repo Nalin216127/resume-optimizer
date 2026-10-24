@@ -52,13 +52,13 @@ class ApiBackend:
             raise RuntimeError(r.json().get("detail", r.text) if r.headers.get("content-type", "").startswith("application/json") else r.text)
         return r.json()
 
-    def start(self, payload):
+    def start(self, payload, on_event=None):
         return self._call("POST", "/api/v1/sessions", json=payload)
 
-    def feedback(self, sid, action, text):
+    def feedback(self, sid, action, text, on_event=None):
         return self._call("POST", f"/api/v1/sessions/{sid}/feedback", json={"action": action, "feedback": text})
 
-    def retry(self, sid):
+    def retry(self, sid, on_event=None):
         return self._call("POST", f"/api/v1/sessions/{sid}/retry")
 
     def extract(self, name, data):
@@ -88,22 +88,22 @@ class EmbeddedBackend:
         self.svc = ResumeService(settings)
         self.label = f"in-process ({self.LABELS.get(provider, provider)})"
 
-    def start(self, payload):
+    def start(self, payload, on_event=None):
         from resume_optimizer.schemas import StartSessionRequest
 
-        return self.svc.start(StartSessionRequest(**payload)).model_dump()
+        return self.svc.start(StartSessionRequest(**payload), on_event).model_dump()
 
-    def feedback(self, sid, action, text):
+    def feedback(self, sid, action, text, on_event=None):
         from resume_optimizer.schemas import FeedbackRequest
 
         try:
-            return self.svc.feedback(sid, FeedbackRequest(action=action, feedback=text)).model_dump()
+            return self.svc.feedback(sid, FeedbackRequest(action=action, feedback=text), on_event).model_dump()
         except ValueError as exc:
             raise RuntimeError(str(exc)) from exc
 
-    def retry(self, sid):
+    def retry(self, sid, on_event=None):
         try:
-            return self.svc.retry(sid).model_dump()
+            return self.svc.retry(sid, on_event).model_dump()
         except ValueError as exc:
             raise RuntimeError(str(exc)) from exc
 
@@ -175,13 +175,29 @@ with st.sidebar:
         st.rerun()
 
 
+AGENT_LABELS = {"supervisor": "🧭 Supervisor", "context": "🎯 Context", "writer": "✍️ Writer",
+                "reviewer": "🔍 Reviewer", "human": "🧑 You"}
+
+
 def run(fn, *args):
+    """Run a backend call, streaming each agent step into a status panel as it finishes."""
     ss.last_error = None
+    status_box = st.status("Agents are working…", expanded=True)
+
+    def on_event(agent: str, message: str) -> None:
+        label = AGENT_LABELS.get(agent, agent)
+        if agent != "supervisor":
+            status_box.update(label=f"{label} finished. Working on the next step…")
+        status_box.markdown(f"**{label}** · {message}")
+
     try:
-        with st.spinner("Agents are working… this can take a minute"):
-            ss.session = fn(*args)
+        ss.session = fn(*args, on_event=on_event)
+        failed = ss.session.get("status") == "failed"
+        status_box.update(label="Stopped with an error" if failed else "Done", state="error" if failed else "complete",
+                          expanded=False)
     except Exception as exc:  # noqa: BLE001 - surface any backend failure in the UI
         ss.last_error = f"Request failed: {exc}"
+        status_box.update(label="Request failed", state="error")
 
 
 def html(markup: str) -> None:

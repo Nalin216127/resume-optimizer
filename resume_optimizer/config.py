@@ -20,9 +20,9 @@ class Settings:
     anthropic_model: str = field(default_factory=lambda: os.getenv("ANTHROPIC_MODEL", "claude-opus-5-5"))
     anthropic_refusal_fallback: bool = field(default_factory=lambda: _bool("ANTHROPIC_REFUSAL_FALLBACK", True))
     gemini_api_key: str = field(default_factory=lambda: os.getenv("GEMINI_API_KEY", ""))
-    gemini_model: str = field(default_factory=lambda: os.getenv("GEMINI_MODEL", "gemini-flash-latest"))
+    gemini_model: str = field(default_factory=lambda: os.getenv("GEMINI_MODEL", "gemini-flash-lite-latest"))
     gemini_fallback_models: List[str] = field(default_factory=lambda: [
-        m.strip() for m in os.getenv("GEMINI_FALLBACK_MODELS", "gemini-flash-lite-latest").split(",") if m.strip()])
+        m.strip() for m in os.getenv("GEMINI_FALLBACK_MODELS", "gemini-flash-latest").split(",") if m.strip()])
     llm_timeout_seconds: int = field(default_factory=lambda: int(os.getenv("LLM_TIMEOUT_SECONDS", "180")))
     # Per-agent effort: cheap extraction, deeper writing, balanced review.
     context_effort: str = field(default_factory=lambda: os.getenv("CONTEXT_EFFORT", "low"))

@@ -33,6 +33,7 @@ TOKENS: Dict[str, Dict[str, str]] = {
         "warning-soft": "rgba(251, 191, 36, 0.12)",
         "danger-soft": "rgba(248, 113, 113, 0.12)",
         "shadow": "0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.25)",
+        "toolbar-icon-filter": "none",
     },
     "light": {
         "bg": "#F5F6FA",
@@ -53,6 +54,8 @@ TOKENS: Dict[str, Dict[str, str]] = {
         "warning-soft": "rgba(180, 83, 9, 0.08)",
         "danger-soft": "rgba(185, 28, 28, 0.07)",
         "shadow": "0 1px 2px rgba(20,26,42,.06), 0 8px 24px rgba(20,26,42,.06)",
+        # Toolbar icons (Share/star/edit/GitHub) are images coloured for the dark base theme: darken them.
+        "toolbar-icon-filter": "brightness(0) opacity(0.62)",
     },
 }
 
@@ -76,6 +79,10 @@ def page_css(mode: str) -> str:
   color: var(--ro-text);
 }}
 [data-testid="stHeader"] {{ background: transparent; }}
+[data-testid="stToolbarActionButtonIcon"] {{ filter: var(--ro-toolbar-icon-filter); }}
+[data-testid="stToolbar"] [data-testid="stIconMaterial"], [data-testid="stToolbar"] button,
+[data-testid="stToolbarActionButtonLabel"], [data-testid="stMainMenu"] svg {{ color: var(--ro-text) !important; }}
+[data-testid="stExpandSidebarButton"] [data-testid="stIconMaterial"] {{ color: var(--ro-muted) !important; }}
 /* Keep content (and the theme toggle) below Streamlit's fixed header, which captures clicks. */
 [data-testid="stMainBlockContainer"] {{ padding-top: 4.5rem; max-width: 1200px; }}
 [data-testid="stApp"] p, [data-testid="stApp"] li, [data-testid="stApp"] label,
@@ -121,6 +128,13 @@ hr {{ border-color: var(--ro-border) !important; }}
   background: var(--ro-surface-2); border: 1.5px dashed var(--ro-border); border-radius: 12px;
 }}
 [data-testid="stFileUploaderDropzone"] * {{ color: var(--ro-muted); }}
+/* Uploaded-file chip: stFileChip on newer Streamlit, stFileUploaderFile on older. */
+[data-testid="stFileChip"], [data-testid="stFileUploaderFile"] {{
+  background: var(--ro-surface-2) !important; border: 1px solid var(--ro-border); border-radius: 10px;
+}}
+[data-testid="stFileChip"] *, [data-testid="stFileUploaderFile"] * {{ color: var(--ro-text) !important; }}
+[data-testid="stFileUploader"] [data-testid="stBaseButton-minimal"] {{ color: var(--ro-muted) !important; }}
+[data-testid="stWidgetLabel"], [data-testid="stWidgetLabel"] * {{ color: var(--ro-text) !important; }}
 
 /* ---------- buttons ---------- */
 [data-testid="stBaseButton-primary"] {{
@@ -159,6 +173,9 @@ button[role="tab"] p {{ color: var(--ro-muted); font-weight: 500; }}
 button[role="tab"][aria-selected="true"] p {{ color: var(--ro-accent); font-weight: 600; }}
 [data-baseweb="tab-highlight"] {{ background-color: var(--ro-accent); }}
 [data-baseweb="tab-border"] {{ display: none; }}
+
+/* ---------- live progress panel ---------- */
+[data-testid="stExpander"] details[open] summary, [data-testid="stStatusWidget"] * {{ color: var(--ro-text); }}
 
 /* ---------- alerts ---------- */
 [data-testid="stAlert"] {{ border-radius: 12px; }}
