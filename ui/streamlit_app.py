@@ -199,11 +199,11 @@ if ss.session is None:
     st.stop()
 
 s = ss.session
-status_badge = {"awaiting_human": "🟡 Awaiting your review", "approved": "🟢 Approved",
+status_badge = {"awaiting_human": "🟡 Your turn", "approved": "🟢 Approved",
                 "failed": "🔴 Failed", "running": "🔵 Running"}[s["status"]]
 review = s.get("review") or {}
-c1, c2, c3, c4 = st.columns(4)
-c1.metric("Status", status_badge)
+c1, c2, c3, c4 = st.columns([1.4, 1, 1, 1])
+c1.metric("Status", status_badge, help="Your turn = the draft is waiting for you to approve it or request changes")
 c2.metric("Overall score", f"{review.get('overall', 0):.1f} / 10")
 c3.metric("Keyword coverage", f"{review.get('keyword_coverage', 0):.0%}")
 c4.metric("Writer passes", s.get("revision_count", 0))

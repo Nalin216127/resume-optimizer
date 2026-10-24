@@ -8,6 +8,7 @@ RUN pip install --no-cache-dir -r requirements-ui.txt
 # The UI only imports the samples module from the package in API mode.
 COPY resume_optimizer ./resume_optimizer
 COPY ui ./ui
+COPY .streamlit ./.streamlit
 USER 10001
 EXPOSE 8501
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s \
