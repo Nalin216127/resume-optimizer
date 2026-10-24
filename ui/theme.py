@@ -128,7 +128,7 @@ hr {{ border-color: var(--ro-border) !important; }}
   white-space: nowrap;
 }}
 [data-testid="stButtonGroup"] button p {{ color: inherit !important; }}
-[data-testid="stBaseButton-segmented_controlActive"] {{
+[data-testid="stBaseButton-segmented_controlActive"], [data-testid="stButtonGroup"] button[aria-checked="true"] {{
   background: var(--ro-button) !important; border-color: var(--ro-button) !important; color: #fff !important;
 }}
 
