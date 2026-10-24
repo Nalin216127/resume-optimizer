@@ -100,11 +100,14 @@ hr {{ border-color: var(--ro-border) !important; }}
   -webkit-text-fill-color: var(--ro-text); caret-color: var(--ro-accent);
   border-radius: 10px; font-size: 0.92rem; line-height: 1.5;
 }}
+/* Older Streamlit wraps inputs in data-baseweb elements, newer ones in *RootElement test ids: style both. */
 [data-testid="stTextArea"] [data-baseweb="textarea"], [data-testid="stTextInput"] [data-baseweb="input"],
-[data-testid="stTextArea"] [data-baseweb="textarea"] > div, [data-testid="stTextInput"] [data-baseweb="base-input"] {{
+[data-testid="stTextArea"] [data-baseweb="textarea"] > div, [data-testid="stTextInput"] [data-baseweb="base-input"],
+[data-testid="stTextAreaRootElement"], [data-testid="stTextInputRootElement"] {{
   border-color: var(--ro-border) !important; border-radius: 10px; background: var(--ro-surface-2) !important;
 }}
-[data-testid="stTextArea"] [data-baseweb="textarea"]:focus-within, [data-testid="stTextInput"] [data-baseweb="input"]:focus-within {{
+[data-testid="stTextArea"] [data-baseweb="textarea"]:focus-within, [data-testid="stTextInput"] [data-baseweb="input"]:focus-within,
+[data-testid="stTextAreaRootElement"]:focus-within, [data-testid="stTextInputRootElement"]:focus-within {{
   border-color: var(--ro-button) !important; box-shadow: 0 0 0 3px var(--ro-chip);
 }}
 
