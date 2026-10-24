@@ -132,9 +132,27 @@ class EmbeddedBackend:
             raise RuntimeError(str(exc)) from exc
 
 
+PROVIDER_KEYS = {"gemini": "GEMINI_API_KEY", "openrouter": "OPENROUTER_API_KEY", "anthropic": "ANTHROPIC_API_KEY"}
+PROVIDER_NAMES = {"gemini": "Gemini", "openrouter": "OpenRouter", "anthropic": "Claude"}
+
+
+def available_providers() -> list:
+    return [p for p, key in PROVIDER_KEYS.items() if _secret(key)]
+
+
+def preference_options() -> dict:
+    """Sidebar choices: automatic failover, or each available provider first (the rest stay as backups)."""
+    available = available_providers()
+    options = {"Auto (failover)": "auto"}
+    if len(available) > 1:
+        for p in available:
+            options[f"{PROVIDER_NAMES[p]} first"] = ",".join([p] + [o for o in available if o != p])
+    return options
+
+
 def embedded_provider() -> str:
-    """LLM_PROVIDER from secrets, else "auto": every provider with a key, in failover order."""
-    return _secret("LLM_PROVIDER") or "auto"
+    """LLM_PROVIDER from secrets wins; otherwise the visitor's sidebar preference (default: auto failover)."""
+    return _secret("LLM_PROVIDER") or st.session_state.get("provider_pref_value", "auto")
 
 
 @st.cache_resource(show_spinner="Starting the agents…")
@@ -202,6 +220,16 @@ with hero_col:
 
 with st.sidebar:
     st.markdown("### ⚙️ Settings")
+    options = preference_options()
+    if len(options) > 1 and not _secret("LLM_PROVIDER"):
+        # Sessions live in the backend they started in, so the order can't change mid-run.
+        choice = st.selectbox("Model preference", list(options), key="provider_pref",
+                              disabled=ss.get("session") is not None,
+                              help="Which provider answers first. The others stay as automatic backups. "
+                                   "Use Start over to change it during a run.")
+        if options[choice] != ss.get("provider_pref_value", "auto"):
+            ss.provider_pref_value = options[choice]
+            st.rerun()  # rebuild the backend for the new order before anything uses it
     st.markdown(f'<div class="ro-backend">Models: <b>{theme.esc(backend.label)}</b></div>', unsafe_allow_html=True)
     if getattr(backend, "embeddings", None):
         st.markdown(f'<div class="ro-backend">Embeddings: <b>{theme.esc(backend.embeddings)}</b></div>',

@@ -273,7 +273,8 @@ class OpenAICompatLLM:
         self._openai = openai
         self.label = label
         self.models = models
-        self.client = openai.OpenAI(base_url=base_url, api_key=api_key, timeout=timeout, max_retries=1,
+        # No SDK retries: on failure the next model is tried instead, which is faster for flaky free tiers.
+        self.client = openai.OpenAI(base_url=base_url, api_key=api_key, timeout=timeout, max_retries=0,
                                     default_headers=headers)
         self._cooldown_until: Dict[str, float] = {}
 
@@ -533,13 +534,13 @@ def _build_one(name: str, settings: Settings) -> LLM:
     if name == "openrouter":
         return OpenAICompatLLM(
             "OpenRouter", "https://openrouter.ai/api/v1", settings.openrouter_api_key, settings.openrouter_models,
-            settings.llm_timeout_seconds,
+            settings.openai_compat_timeout_seconds,
             headers={"X-Title": "Multi-Agent Resume Optimizer",
                      "HTTP-Referer": "https://github.com/Nalin216127/resume-optimizer"},
         )
     if name == "openai_compat":
         return OpenAICompatLLM("OpenAI-compatible", settings.openai_compat_base_url, settings.openai_compat_api_key,
-                               settings.openai_compat_models, settings.llm_timeout_seconds)
+                               settings.openai_compat_models, settings.openai_compat_timeout_seconds)
     raise ValueError(f"Unknown LLM provider: {name}")
 
 

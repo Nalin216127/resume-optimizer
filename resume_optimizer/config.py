@@ -31,15 +31,18 @@ class Settings:
         m.strip() for m in os.getenv(
             "OPENROUTER_MODELS",
             # Tried in order; openrouter/free is OpenRouter's router over whatever free model is available.
-            "google/gemma-4-31b-it:free,nvidia/nemotron-3-ultra-550b-a55b:free,thinkingmachines/inkling:free,"
-            "nvidia/nemotron-3.5-super-vl:free,dots-studio/dots-3-note-preview:free,google/gemma-4-26b-a4b-it:free,"
-            "nvidia/nemotron-3-super-120b-a12b:free,openrouter/free"
+            # Checked live with "Test every model": Nemotron 3 Ultra (too slow), Inkling (agent-only) and
+            # Nemotron 3 Super (provider 404) were dropped.
+            "google/gemma-4-31b-it:free,nvidia/nemotron-3.5-super-vl:free,dots-studio/dots-3-note-preview:free,"
+            "google/gemma-4-26b-a4b-it:free,openrouter/free"
         ).split(",") if m.strip()])
     # Any other OpenAI-compatible chat API (Groq, Together, a vLLM server, ...).
     openai_compat_base_url: str = field(default_factory=lambda: os.getenv("OPENAI_COMPAT_BASE_URL", ""))
     openai_compat_api_key: str = field(default_factory=lambda: os.getenv("OPENAI_COMPAT_API_KEY", ""))
     openai_compat_models: List[str] = field(default_factory=lambda: [
         m.strip() for m in os.getenv("OPENAI_COMPAT_MODELS", "").split(",") if m.strip()])
+    # Per-request timeout for OpenAI-compatible providers: short, so a stuck free model is skipped quickly.
+    openai_compat_timeout_seconds: int = field(default_factory=lambda: int(os.getenv("OPENAI_COMPAT_TIMEOUT_SECONDS", "60")))
     anthropic_api_key: str = field(default_factory=lambda: os.getenv("ANTHROPIC_API_KEY", ""))
     llm_timeout_seconds: int = field(default_factory=lambda: int(os.getenv("LLM_TIMEOUT_SECONDS", "180")))
     # Per-agent effort: cheap extraction, deeper writing, balanced review.
