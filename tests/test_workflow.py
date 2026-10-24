@@ -113,3 +113,28 @@ def test_retrieval_is_relevant():
     hits = store.search("Kubernetes Helm CI/CD deploy services", k=3)
     assert any("Kubernetes" in h["text"] for h in hits)
     assert all(h["kind"] == "guideline" for h in store.search("anything", k=3, kind="guideline"))
+
+
+def test_failed_session_retries_from_last_completed_step(settings):
+    class FlakyReviewer(MockLLM):
+        def __init__(self):
+            self.calls, self.fail_next_review = [], True
+
+        def structured(self, *, task, **kw):
+            self.calls.append(task)
+            if task == "reviewer" and self.fail_next_review:
+                self.fail_next_review = False
+                raise LLMError("reviewer: Gemini quota exhausted")
+            return super().structured(task=task, **kw)
+
+    llm = FlakyReviewer()
+    svc = ResumeService(settings, llm=llm)
+    view = start(svc, max_auto_revisions=0)
+    assert view.status == "failed"
+    assert svc.get(view.session_id).status == "failed"  # still failed when re-read later
+
+    view = svc.retry(view.session_id)
+    assert view.status == "awaiting_human"
+    assert llm.calls == ["context", "writer", "reviewer", "reviewer"]  # context/writer not re-run
+    with pytest.raises(ValueError):
+        svc.retry(view.session_id)

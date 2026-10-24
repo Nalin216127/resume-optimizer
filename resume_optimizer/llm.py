@@ -4,6 +4,7 @@ Agents call ``llm.structured(...)`` and always get back a validated Pydantic
 model. Two implementations:
 
 * ``AnthropicLLM`` — Claude via the official Anthropic SDK structured outputs.
+* ``GeminiLLM`` — Google Gemini via the google-genai SDK with JSON-schema output.
 * ``MockLLM`` — deterministic heuristics so the whole system (graph, API, UI,
   tests) runs offline without an API key.
 """
@@ -11,7 +12,8 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any, Dict, List, Protocol, Type, TypeVar
+import time
+from typing import Any, Dict, List, Optional, Protocol, Type, TypeVar
 
 from pydantic import BaseModel
 
@@ -85,6 +87,127 @@ class AnthropicLLM:
         if parsed is None:
             raise LLMError(f"{task}: model returned no parseable output")
         return parsed
+
+
+# --------------------------------------------------------------------- Gemini
+class _QuotaExhausted(Exception):
+    """A 429 whose retry delay is too long to wait out inside a request (e.g. a daily free-tier cap)."""
+
+    def __init__(self, model: str, retry_after: float):
+        super().__init__(model)
+        self.model, self.retry_after = model, retry_after
+
+
+def _retry_delay(exc: Any) -> Optional[float]:
+    """Seconds from a google.rpc.RetryInfo detail (e.g. "37s"), if the error carries one."""
+    details = (getattr(exc, "details", None) or {}).get("error", {}).get("details", [])
+    for d in details:
+        if d.get("@type", "").endswith("RetryInfo") and str(d.get("retryDelay", "")).endswith("s"):
+            try:
+                return float(d["retryDelay"][:-1])
+            except ValueError:
+                return None
+    return None
+
+
+def _human_delay(seconds: float) -> str:
+    minutes = int(seconds // 60)
+    return f"{minutes // 60}h {minutes % 60}m" if minutes >= 60 else f"{max(minutes, 1)}m"
+
+
+class GeminiLLM:
+    RETRYABLE = {429, 500, 502, 503, 504}
+    MAX_INLINE_WAIT = 60  # wait out per-minute limits; anything longer moves to the next model
+    # Agent effort → Gemini thinking budget (tokens). None lets the model decide.
+    THINKING_BUDGET = {"low": 512, "medium": 2048, "high": None}
+
+    def __init__(self, settings: Settings):
+        import httpx
+        from google import genai  # imported lazily: only needed when LLM_PROVIDER=gemini
+        from google.genai import errors, types
+
+        if not settings.gemini_api_key:
+            raise ValueError("LLM_PROVIDER=gemini requires GEMINI_API_KEY")
+        self._errors, self._types, self._transport_error = errors, types, httpx.TransportError
+        # Without a timeout, a dropped connection (e.g. the host sleeping) hangs the request forever.
+        self.client = genai.Client(
+            api_key=settings.gemini_api_key,
+            http_options=types.HttpOptions(timeout=settings.llm_timeout_seconds * 1000),
+        )
+        self.model = settings.gemini_model
+        # Quotas are per model, so when one model's quota runs out the next one usually still works.
+        self.models = [self.model] + [m for m in settings.gemini_fallback_models if m != self.model]
+        self._exhausted_until: Dict[str, float] = {}
+
+    def structured(self, *, task, system, prompt, schema, payload, effort):
+        budget = self.THINKING_BUDGET.get(effort)
+        config = self._types.GenerateContentConfig(
+            system_instruction=system,
+            response_mime_type="application/json",
+            response_json_schema=schema.model_json_schema(),
+            max_output_tokens=16000,
+            thinking_config=self._types.ThinkingConfig(thinking_budget=budget) if budget else None,
+        )
+        response = self._generate_with_fallback(task, prompt, config)
+
+        feedback = getattr(response, "prompt_feedback", None)
+        if feedback is not None and getattr(feedback, "block_reason", None):
+            raise LLMError(f"{task}: Gemini blocked the prompt ({feedback.block_reason})")
+        finish = response.candidates[0].finish_reason if response.candidates else None
+        finish_name = getattr(finish, "name", str(finish))
+        if finish_name == "MAX_TOKENS":
+            raise LLMError(f"{task}: response hit max_output_tokens before completing")
+        if finish_name not in (None, "STOP", "FINISH_REASON_UNSPECIFIED"):
+            raise LLMError(f"{task}: Gemini stopped early ({finish_name})")
+        try:
+            return schema.model_validate_json(response.text or "")
+        except ValueError as exc:
+            raise LLMError(f"{task}: Gemini returned output that does not match the schema") from exc
+
+    def _generate_with_fallback(self, task, prompt, config):
+        now = time.time()
+        available = [m for m in self.models if self._exhausted_until.get(m, 0) <= now]
+        for model in available:
+            try:
+                return self._generate(task, model, prompt, config)
+            except _QuotaExhausted as exc:
+                self._exhausted_until[model] = time.time() + exc.retry_after
+                log.warning("gemini %s: quota exhausted on %s for %s; trying next model",
+                            task, model, _human_delay(exc.retry_after))
+        soonest = min(self._exhausted_until.get(m, now) for m in self.models) - time.time()
+        raise LLMError(
+            f"{task}: Gemini quota exhausted for {', '.join(self.models)} (free tier allows few requests per day). "
+            f"Resets in about {_human_delay(max(soonest, 60))}; use a paid key or retry later."
+        )
+
+    def _generate(self, task, model, prompt, config, attempts: int = 4):
+        for attempt in range(attempts):
+            started = time.monotonic()
+            try:
+                response = self.client.models.generate_content(model=model, contents=prompt, config=config)
+                log.info("gemini %s: %s %.1fs (attempt %d)", task, model, time.monotonic() - started, attempt + 1)
+                return response
+            except self._errors.APIError as exc:
+                delay = _retry_delay(exc)
+                if exc.code == 429 and delay is not None and delay > self.MAX_INLINE_WAIT:
+                    raise _QuotaExhausted(model, delay) from exc
+                if exc.code in self.RETRYABLE and attempt < attempts - 1:
+                    time.sleep(delay if delay is not None else 2 ** attempt)
+                    continue
+                if exc.code == 429:
+                    raise _QuotaExhausted(model, delay or self.MAX_INLINE_WAIT) from exc
+                if exc.code == 404:
+                    raise LLMError(f"{task}: Gemini model {model} is unavailable to this key: set GEMINI_MODEL") from exc
+                if exc.code in (400, 401, 403):
+                    raise LLMError(f"{task}: Gemini rejected the request ({exc.code}): check GEMINI_API_KEY and GEMINI_MODEL") from exc
+                raise LLMError(f"{task}: Gemini API error {exc.code}") from exc
+            except (self._transport_error, OSError) as exc:  # timeouts, dropped connections, DNS failures
+                log.warning("gemini %s: %s after %.1fs (attempt %d)", task, type(exc).__name__,
+                            time.monotonic() - started, attempt + 1)
+                if attempt < attempts - 1:
+                    time.sleep(2 ** attempt)
+                    continue
+                raise LLMError(f"{task}: could not reach the Gemini API (timed out or connection lost)") from exc
 
 
 # ----------------------------------------------------------------------- Mock
@@ -187,4 +310,6 @@ def build_llm(settings: Settings) -> LLM:
         return MockLLM()
     if settings.llm_provider == "anthropic":
         return AnthropicLLM(settings)
+    if settings.llm_provider == "gemini":
+        return GeminiLLM(settings)
     raise ValueError(f"Unknown LLM_PROVIDER: {settings.llm_provider}")

@@ -68,14 +68,24 @@ class ResumeService:
             raise ValueError("Feedback text is required to request a revision")
         return self._run(session_id, Command(resume=req.model_dump()))
 
+    def retry(self, session_id: str) -> SessionView:
+        """Resume a failed run from the last completed agent; finished agents are not re-run."""
+        view = self.get(session_id)
+        if view.status != "failed":
+            raise ValueError(f"Session is {view.status}; only failed sessions can be retried")
+        return self._run(session_id, None)
+
     def get(self, session_id: str, error: Optional[str] = None) -> SessionView:
         snapshot = self.graph.get_state(self._config(session_id))
         values = snapshot.values
         if not values:
             raise SessionNotFound(session_id)
         waiting = any(task.interrupts for task in snapshot.tasks)
-        if error:
+        # Runs are synchronous, so pending nodes with no interrupt mean the last run stopped on an error.
+        stalled = bool(snapshot.next) and not waiting
+        if error or stalled:
             status = "failed"
+            error = error or "The last run stopped before finishing. Retry to continue from the last completed step."
         elif values.get("approved"):
             status = "approved"
         elif waiting:

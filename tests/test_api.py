@@ -33,6 +33,7 @@ def test_session_lifecycle(client):
 
     r = client.post(f"/api/v1/sessions/{sid}/feedback", json={"action": "approve"})
     assert r.status_code == 409
+    assert client.post(f"/api/v1/sessions/{sid}/retry").status_code == 409
 
 
 def test_errors(client):

@@ -55,23 +55,31 @@ class ApiBackend:
     def feedback(self, sid, action, text):
         return self._call("POST", f"/api/v1/sessions/{sid}/feedback", json={"action": action, "feedback": text})
 
+    def retry(self, sid):
+        return self._call("POST", f"/api/v1/sessions/{sid}/retry")
+
     def extract(self, name, data):
         return self._call("POST", "/api/v1/extract-text", files={"file": (name, data)})["text"]
 
 
 class EmbeddedBackend:
+    LABELS = {"anthropic": "Claude", "gemini": "Gemini", "mock": "offline demo agents"}
+
     def __init__(self):
-        if _secret("ANTHROPIC_API_KEY"):
-            os.environ["ANTHROPIC_API_KEY"] = _secret("ANTHROPIC_API_KEY")
-            os.environ.setdefault("LLM_PROVIDER", "anthropic")
-        else:
-            os.environ.setdefault("LLM_PROVIDER", "mock")
+        # Copy hosted secrets (e.g. Streamlit Cloud) into the environment the service reads.
+        for name in ("ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GEMINI_MODEL", "ANTHROPIC_MODEL", "LLM_PROVIDER"):
+            if _secret(name):
+                os.environ[name] = _secret(name)
+        if "LLM_PROVIDER" not in os.environ:
+            os.environ["LLM_PROVIDER"] = (
+                "gemini" if os.getenv("GEMINI_API_KEY") else "anthropic" if os.getenv("ANTHROPIC_API_KEY") else "mock"
+            )
         os.environ.setdefault("VECTOR_BACKEND", "memory")
         os.environ.setdefault("CHECKPOINT_BACKEND", "memory")
         from resume_optimizer.service import ResumeService
 
         self.svc = ResumeService()
-        self.label = "in-process (" + ("Claude" if os.environ["LLM_PROVIDER"] == "anthropic" else "offline demo agents") + ")"
+        self.label = f"in-process ({self.LABELS.get(os.environ['LLM_PROVIDER'], os.environ['LLM_PROVIDER'])})"
 
     def start(self, payload):
         from resume_optimizer.schemas import StartSessionRequest
@@ -83,6 +91,12 @@ class EmbeddedBackend:
 
         try:
             return self.svc.feedback(sid, FeedbackRequest(action=action, feedback=text)).model_dump()
+        except ValueError as exc:
+            raise RuntimeError(str(exc)) from exc
+
+    def retry(self, sid):
+        try:
+            return self.svc.retry(sid).model_dump()
         except ValueError as exc:
             raise RuntimeError(str(exc)) from exc
 
@@ -175,6 +189,9 @@ c3.metric("Keyword coverage", f"{review.get('keyword_coverage', 0):.0%}")
 c4.metric("Writer passes", s.get("revision_count", 0))
 if s.get("error"):
     st.error(s["error"])
+if s["status"] == "failed" and st.button("🔁 Retry from the last completed step", type="primary"):
+    run(backend.retry, s["session_id"])
+    st.rerun()
 
 tab_draft, tab_review, tab_context, tab_trace, tab_original = st.tabs(
     ["Draft", "Review", "Context", "Agent trace", "Original"])

@@ -26,10 +26,11 @@ def _route(state: ResumeState) -> Tuple[str, str]:
     review = state["review"]
     budget_left = state.get("auto_revisions", 0) < state.get("max_auto_revisions", 2)
     if review["verdict"] == "revise" and budget_left:
-        return "writer", (
-            f"Score {review['overall']:.1f} is below {state['quality_threshold']:.1f}: automatic revision "
-            f"{state.get('auto_revisions', 0) + 1}/{state['max_auto_revisions']}"
-        )
+        if review["overall"] < state["quality_threshold"]:
+            why = f"Score {review['overall']:.2f} is below {state['quality_threshold']:.2f}"
+        else:
+            why = f"{len(review['report']['possible_fabrications'])} possibly unsupported claim(s)"
+        return "writer", f"{why}: automatic revision {state.get('auto_revisions', 0) + 1}/{state['max_auto_revisions']}"
     why = "passed review" if review["verdict"] == "pass" else "auto-revision budget exhausted"
     return "human", f"Draft {why} (score {review['overall']:.1f}): waiting for human approval"
 

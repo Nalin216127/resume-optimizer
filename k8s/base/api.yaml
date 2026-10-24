@@ -39,7 +39,9 @@ spec:
             - configMapRef: {name: resume-optimizer-config}
           env:
             - name: ANTHROPIC_API_KEY
-              valueFrom: {secretKeyRef: {name: resume-optimizer-secrets, key: ANTHROPIC_API_KEY}}
+              valueFrom: {secretKeyRef: {name: resume-optimizer-secrets, key: ANTHROPIC_API_KEY, optional: true}}
+            - name: GEMINI_API_KEY
+              valueFrom: {secretKeyRef: {name: resume-optimizer-secrets, key: GEMINI_API_KEY, optional: true}}
             - name: API_AUTH_TOKEN
               valueFrom: {secretKeyRef: {name: resume-optimizer-secrets, key: API_AUTH_TOKEN}}
             - name: DATABASE_URL

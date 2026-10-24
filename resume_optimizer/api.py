@@ -88,6 +88,18 @@ def submit_feedback(session_id: str, req: FeedbackRequest, svc: ResumeService = 
         raise HTTPException(409, str(exc))
 
 
+@app.post("/api/v1/sessions/{session_id}/retry", response_model=SessionView,
+          dependencies=[Depends(require_auth)], tags=["sessions"])
+def retry_session(session_id: str, svc: ResumeService = Depends(get_service)):
+    """Continue a failed run (e.g. after an LLM rate limit) from the last completed agent."""
+    try:
+        return svc.retry(session_id)
+    except SessionNotFound:
+        raise HTTPException(404, "Session not found")
+    except ValueError as exc:
+        raise HTTPException(409, str(exc))
+
+
 @app.post("/api/v1/knowledge", dependencies=[Depends(require_auth)], tags=["knowledge"])
 def ingest_knowledge(req: KnowledgeIngestRequest, svc: ResumeService = Depends(get_service)):
     """Add guidelines, exemplar bullets or role profiles to the Milvus knowledge base."""
