@@ -71,6 +71,12 @@ class ApiBackend:
     def extract(self, name, data):
         return self._call("POST", "/api/v1/extract-text", files={"file": (name, data)})["text"]
 
+    def record_visit(self):
+        self._call("POST", "/api/v1/visits")
+
+    def site_stats(self):
+        return self._call("GET", "/api/v1/stats")
+
 
 class EmbeddedBackend:
     def __init__(self, provider: str):
@@ -144,6 +150,13 @@ class EmbeddedBackend:
         except ValueError as exc:
             raise RuntimeError(str(exc)) from exc
 
+    def record_visit(self):
+        self.svc.record_visit()
+
+    def site_stats(self):
+        stats = self.svc.site_stats()
+        return stats.model_dump() if stats else None
+
 
 PROVIDER_KEYS = {"gemini": "GEMINI_API_KEY", "openrouter": "OPENROUTER_API_KEY", "anthropic": "ANTHROPIC_API_KEY"}
 PROVIDER_NAMES = {"gemini": "Gemini", "openrouter": "OpenRouter", "anthropic": "Claude"}
@@ -186,6 +199,15 @@ def cached_model_status(provider: str, key_fingerprint: str):
     return get_backend(provider, key_fingerprint).provider_status(every_model=True)
 
 
+@st.cache_data(ttl=60, show_spinner=False)
+def cached_site_stats(provider: str, key_fingerprint: str):
+    # Shared by all visitors for a minute, so busy traffic doesn't query the counters on every rerun.
+    try:
+        return get_backend(provider, key_fingerprint).site_stats()
+    except Exception:  # noqa: BLE001 - the counter is optional; hide it
+        return None
+
+
 def key_fingerprint() -> str:
     import hashlib
 
@@ -204,6 +226,13 @@ ss = st.session_state
 ss.setdefault("session", None)
 ss.setdefault("resume_text", SAMPLE_RESUME)
 ss.setdefault("job_text", SAMPLE_JOB)
+if not ss.get("visit_counted"):
+    # Once per browser session (each page load); reruns from clicks don't count again.
+    ss.visit_counted = True
+    try:
+        backend.record_visit()
+    except Exception:  # noqa: BLE001 - the counter is optional
+        pass
 if "theme_mode" not in ss:
     # ?theme=light in the URL survives reloads and shared links.
     ss.theme_mode = "light" if st.query_params.get("theme") == "light" else "dark"
@@ -243,6 +272,9 @@ st.query_params["theme"] = ss.theme_mode
 st.markdown(theme.page_css(ss.theme_mode), unsafe_allow_html=True)
 with hero_col:
     st.markdown(theme.hero(status), unsafe_allow_html=True)
+    site_stats = cached_site_stats(embedded_provider(), key_fingerprint())
+    if site_stats:
+        st.markdown(theme.site_counter(site_stats), unsafe_allow_html=True)
 
 with st.sidebar:
     st.markdown("### ⚙️ Settings")

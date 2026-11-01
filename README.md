@@ -172,9 +172,13 @@ Images live at `ghcr.io/nalin216127/resume-optimizer-{api,ui}`. CI builds and pu
 | POST | `/api/v1/sessions/{id}/retry` | Continue a failed run from the last completed agent |
 | POST | `/api/v1/knowledge` | Add guidelines, example bullets or role profiles to Milvus |
 | POST | `/api/v1/extract-text` | PDF / TXT / MD upload → plain text |
+| POST | `/api/v1/visits` | Count one UI visit (stores only the event and the UTC day) |
+| GET | `/api/v1/stats` | Visits (total and today) and optimized resumes, for the UI's counter |
 | GET | `/healthz`, `/readyz` | Probes |
 
 If `API_AUTH_TOKEN` is set, every `/api` call needs an `X-API-Key` header.
+
+The visit counter is kept in a `{MILVUS_COLLECTION}_events` collection next to the knowledge base, so it survives restarts. Each event is its own row, so simultaneous visitors never overwrite each other's count. Without Milvus it is kept in memory and resets on restart.
 
 ## Configuration
 

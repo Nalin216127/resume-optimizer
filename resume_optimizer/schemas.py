@@ -124,6 +124,13 @@ class KnowledgeIngestRequest(BaseModel):
     documents: List[KnowledgeDoc] = Field(min_length=1)
 
 
+class SiteStats(BaseModel):
+    visits: int
+    visits_today: int = Field(description="Visits since midnight UTC")
+    optimizations: int = Field(description="Sessions that produced a reviewed draft")
+    storage: str = Field(description="Where the counts are kept")
+
+
 class AgentEvent(BaseModel):
     agent: str
     message: str

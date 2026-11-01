@@ -14,7 +14,7 @@ from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import get_settings
-from .schemas import FeedbackRequest, KnowledgeIngestRequest, SessionView, StartSessionRequest
+from .schemas import FeedbackRequest, KnowledgeIngestRequest, SessionView, SiteStats, StartSessionRequest
 from .textutils import file_to_text
 from .service import ResumeService, SessionNotFound
 
@@ -107,6 +107,22 @@ def retry_session(session_id: str, svc: ResumeService = Depends(get_service)):
         raise HTTPException(404, "Session not found")
     except ValueError as exc:
         raise HTTPException(409, str(exc))
+
+
+@app.post("/api/v1/visits", dependencies=[Depends(require_auth)], tags=["stats"])
+def record_visit(svc: ResumeService = Depends(get_service)):
+    """Count one visit to the UI. Only the event and the UTC day are stored, no visitor data."""
+    svc.record_visit()
+    return {"status": "recorded"}
+
+
+@app.get("/api/v1/stats", response_model=SiteStats, dependencies=[Depends(require_auth)], tags=["stats"])
+def site_stats(svc: ResumeService = Depends(get_service)):
+    """Visit and optimization counts for the UI's public counter."""
+    stats = svc.site_stats()
+    if stats is None:
+        raise HTTPException(503, "Site counters unavailable")
+    return stats
 
 
 @app.post("/api/v1/knowledge", dependencies=[Depends(require_auth)], tags=["knowledge"])

@@ -218,6 +218,9 @@ button[role="tab"][aria-selected="true"] p {{ color: var(--ro-accent); font-weig
 .ro-step.done {{ color: var(--ro-success); border-color: var(--ro-success); background: var(--ro-success-soft); }}
 .ro-step.active {{ color: #fff; background: var(--ro-button); border-color: var(--ro-button); box-shadow: 0 0 0 4px var(--ro-chip); }}
 .ro-arrow {{ color: var(--ro-muted); font-size: .8rem; }}
+.ro-counter {{ display: flex; flex-wrap: wrap; align-items: center; gap: .45rem; margin: -.5rem 0 1.2rem;
+  font-size: .85rem; color: var(--ro-muted); }}
+.ro-counter b {{ color: var(--ro-text); font-weight: 650; font-variant-numeric: tabular-nums; }}
 
 .ro-section {{ font-size: .78rem; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; color: var(--ro-muted); margin: .2rem 0 .5rem; }}
 .ro-stats {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: .8rem; margin: .4rem 0 1.1rem; }}
@@ -298,6 +301,22 @@ def hero(status: Optional[str]) -> str:
         '<p class="ro-sub">Five agents tailor your resume to a specific job. They extract what the role needs, '
         'rewrite without inventing facts, score the result, and wait for your approval.</p>'
         f'<div class="ro-pipeline">{"".join(steps)}</div>'
+        "</div>"
+    )
+
+
+def site_counter(stats: Dict[str, object]) -> str:
+    """Public visit counter under the hero."""
+    def count(n: object, one: str, many: str) -> str:
+        n = int(n)  # type: ignore[arg-type]
+        return f"<b>{n:,}</b> {one if n == 1 else many}"
+
+    return (
+        f'<div class="ro-counter" title="Counts kept in {esc(str(stats["storage"]))}. Each page load is a visit; '
+        'today means since midnight UTC.">'
+        f'<span>👀 {count(stats["visits"], "visit", "visits")}</span><span class="ro-arrow">·</span>'
+        f'<span>{count(stats["visits_today"], "today", "today")}</span><span class="ro-arrow">·</span>'
+        f'<span>✨ {count(stats["optimizations"], "resume optimized", "resumes optimized")}</span>'
         "</div>"
     )
 

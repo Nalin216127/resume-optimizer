@@ -10,8 +10,9 @@ from langgraph.types import Command
 from .config import Settings, get_settings
 from .graph import build_checkpointer, build_graph
 from .llm import LLM, LLMError, build_llm, check_providers
-from .schemas import FeedbackRequest, KnowledgeDoc, SessionView, StartSessionRequest
+from .schemas import FeedbackRequest, KnowledgeDoc, SessionView, SiteStats, StartSessionRequest
 from .retrieval import HybridRetriever
+from .stats import OPTIMIZATION, VISIT, SiteCounters, build_counters
 from .vectorstore import KnowledgeStore, build_store
 
 log = logging.getLogger(__name__)
@@ -30,12 +31,14 @@ ProgressCallback = Callable[[str, str], None]
 
 class ResumeService:
     def __init__(self, settings: Optional[Settings] = None, llm: Optional[LLM] = None,
-                 store: Optional[KnowledgeStore] = None):
+                 store: Optional[KnowledgeStore] = None, counters: Optional[SiteCounters] = None):
         self.settings = settings or get_settings()
         self.llm = llm or build_llm(self.settings)
         self.store = store or build_store(self.settings)
         self.retriever = HybridRetriever(self.store)
         self.graph = build_graph(self.llm, self.retriever, self.settings, build_checkpointer(self.settings))
+        self.counters = counters or build_counters(self.settings, self.store)
+        self._counted: set = set()  # sessions already counted as optimized
 
     def _config(self, session_id: str) -> Dict[str, Any]:
         return {"configurable": {"thread_id": session_id}, "recursion_limit": RECURSION_LIMIT}
@@ -71,7 +74,15 @@ class ResumeService:
             "revision_requested": False,
             "history": [],
         }
-        return self._run(session_id, initial, on_event)
+        return self._count_optimization(self._run(session_id, initial, on_event))
+
+    def _count_optimization(self, view: SessionView) -> SessionView:
+        # Once per session, when a run first gives it a reviewed draft: a start that fails and then
+        # succeeds on Retry counts once, and revisions requested by the user don't count again.
+        if view.status in ("awaiting_human", "approved") and view.session_id not in self._counted:
+            self._counted.add(view.session_id)
+            self.counters.record(OPTIMIZATION)
+        return view
 
     def feedback(self, session_id: str, req: FeedbackRequest,
                  on_event: Optional[ProgressCallback] = None) -> SessionView:
@@ -87,7 +98,7 @@ class ResumeService:
         view = self.get(session_id)
         if view.status != "failed":
             raise ValueError(f"Session is {view.status}; only failed sessions can be retried")
-        return self._run(session_id, None, on_event)
+        return self._count_optimization(self._run(session_id, None, on_event))
 
     def get(self, session_id: str, error: Optional[str] = None) -> SessionView:
         snapshot = self.graph.get_state(self._config(session_id))
@@ -123,6 +134,12 @@ class ResumeService:
 
     def provider_status(self, every_model: bool = False) -> List[Dict[str, Any]]:
         return check_providers(self.llm, every_model)
+
+    def record_visit(self) -> None:
+        self.counters.record(VISIT)
+
+    def site_stats(self) -> Optional[SiteStats]:
+        return self.counters.stats()
 
     def add_knowledge(self, docs: List[KnowledgeDoc]) -> int:
         return self.retriever.add([d.model_dump() for d in docs])  # also refreshes the keyword index
